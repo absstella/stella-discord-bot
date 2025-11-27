@@ -1,0 +1,16 @@
+# VOICEVOX Engine (Docker版)
+version: '3.8'
+
+services:
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+    container_name: voicevox_engine
+    ports:
+      - "50021:50021"
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Tokyo
+    # GPU版を使う場合は以下をコメント解除
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
