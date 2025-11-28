@@ -28,80 +28,63 @@ class UtilityCog(commands.Cog):
 
     @commands.hybrid_command(name='help', aliases=['h', 'commands'])
     async def help_command(self, ctx, category: Optional[str] = None):
-        """全コマンドを表示します"""
-        # Categorize commands
-        categories = {
-            "🤖 AI・会話": [],
-            "👤 プロフィール": [],
-            "📚 共有知識": [],
-            "🎵 音声・音楽": [],
-            "🎨 クリエイティブ": [],
-            "🎮 ゲーム": [],
-            "⚙️ 開発・進化": [],
-            "🛠️ ユーティリティ": []
-        }
-        
-        # Collect all commands from all cogs
-        for cog_name, cog in self.bot.cogs.items():
-            for command in cog.get_commands():
-                if command.hidden:
-                    continue
-                
-                # Special handling for specific commands
-                if command.name in ['generate_feature', 'dev', 'evolve', 'trigger_evolution']:
-                    categories["⚙️ 開発・進化"].append(command)
-                    continue
+        """全コマンドを表示します（カテゴリ選択式）"""
+        view = HelpView(self.bot, ctx.author)
+        await ctx.send(embed=view.get_initial_embed(), view=view)
 
-                # Categorize based on cog name
-                cog_name_lower = cog_name.lower()
-                if 'music' in cog_name_lower or 'voice' in cog_name_lower:
-                    categories["🎵 音声・音楽"].append(command)
-                elif 'image' in cog_name_lower or 'draw' in cog_name_lower:
-                    categories["🎨 クリエイティブ"].append(command)
-                elif 'ai' in cog_name_lower or 'chat' in cog_name_lower:
-                    categories["🤖 AI・会話"].append(command)
-                elif 'profile' in cog_name_lower:
-                    categories["👤 プロフィール"].append(command)
-                elif 'knowledge' in cog_name_lower:
-                    categories["📚 共有知識"].append(command)
-                elif 'game' in cog_name_lower or 'minecraft' in cog_name_lower:
-                    categories["🎮 ゲーム"].append(command)
-                elif 'dev' in cog_name_lower or 'evolution' in cog_name_lower:
-                    categories["⚙️ 開発・進化"].append(command)
-                else:
-                    categories["🛠️ ユーティリティ"].append(command)
+    @commands.hybrid_command(name='dev_list', aliases=['dev_cmds', 'features'])
+    async def list_dev_commands(self, ctx):
+        """自動生成された機能・コマンドの一覧を表示します"""
+        generated_dir = os.path.join("cogs", "generated")
         
-        # Create embed
+        if not os.path.exists(generated_dir):
+            await ctx.send("📂 生成された機能ディレクトリが見つかりません。")
+            return
+            
+        files = [f for f in os.listdir(generated_dir) if f.endswith('.py') and not f.startswith('__')]
+        
+        if not files:
+            await ctx.send("📂 生成された機能はまだありません。`!dev <機能リクエスト>` で作成できます！")
+            return
+            
         embed = discord.Embed(
-            title="📋 S.T.E.L.L.A. コマンド一覧",
-            description="利用可能な全コマンドです。自然な会話でも多くの機能が使えます！",
+            title="🛠️ 生成された機能一覧",
+            description=f"現在 {len(files)} 個の機能が生成されています。",
             color=0x00ff00
         )
         
-        # Add each category
-        for cat_name, cmds in categories.items():
-            if not cmds:
-                continue
-                
-            cmd_list = []
-            # Limit to 10 commands per category to avoid embed limits
-            display_limit = 10
+        for filename in files:
+            filepath = os.path.join(generated_dir, filename)
+            feature_name = filename.replace('_cog.py', '').replace('.py', '')
             
-            for cmd in cmds[:display_limit]:
-                aliases = f" ({', '.join(cmd.aliases)})" if cmd.aliases else ""
-                cmd_list.append(f"`!{cmd.name}{aliases}` - {cmd.help or '説明なし'}")
-            
-            if len(cmds) > display_limit:
-                cmd_list.append(f"...他{len(cmds) - display_limit}個")
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                # Extract command names
+                commands_found = re.findall(r'@commands\.(?:hybrid_)?command\(.*?name=[\'"](.*?)[\'"]', content)
                 
-            if cmd_list:
+                # Extract class docstring as description
+                docstring_match = re.search(r'class .*?\(.*?\):\s*"""(.*?)"""', content, re.DOTALL)
+                description = docstring_match.group(1).strip() if docstring_match else "説明なし"
+                
+                cmd_list = ", ".join([f"`!{cmd}`" for cmd in commands_found]) if commands_found else "コマンドなし"
+                
                 embed.add_field(
-                    name=cat_name,
-                    value="\n".join(cmd_list),
+                    name=f"📄 {feature_name}",
+                    value=f"{description}\n**Commands:** {cmd_list}",
+                    inline=False
+                )
+                
+            except Exception as e:
+                logger.error(f"Error reading {filename}: {e}")
+                embed.add_field(
+                    name=f"⚠️ {feature_name}",
+                    value=f"読み込みエラー: {e}",
                     inline=False
                 )
         
-        embed.set_footer(text="💡 Tip: 多くの機能は会話形式でも使えます（例: 『音楽再生して』『プロフィール見せて』）")
+        embed.set_footer(text="これらの機能は `cogs/generated/` に保存されています")
         await ctx.send(embed=embed)
     
     # @commands.hybrid_command(name='ping')

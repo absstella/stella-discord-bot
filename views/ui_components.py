@@ -11,71 +11,118 @@ logger = logging.getLogger(__name__)
 class HelpView(discord.ui.View):
     """Help menu with dropdown selection"""
     
-    def __init__(self):
+    def __init__(self, bot, author):
         super().__init__(timeout=300)
-        self.add_item(HelpDropdown())
+        self.bot = bot
+        self.author = author
+        self.add_item(HelpDropdown(bot))
+
+    def get_initial_embed(self):
+        """Get the initial help embed"""
+        embed = discord.Embed(
+            title="📋 S.T.E.L.L.A. コマンド一覧",
+            description="下のメニューからカテゴリを選択してください。\n各カテゴリのコマンド一覧が表示されます。",
+            color=0x00ff00
+        )
+        embed.set_footer(text=f"Requested by {self.author.display_name}")
+        return embed
 
 class HelpDropdown(discord.ui.Select):
     """Dropdown menu for help categories"""
     
-    def __init__(self):
-        options = [
-            discord.SelectOption(
-                label="AI Commands",
-                description="AI conversation and search features",
-                emoji="🤖",
-                value="ai"
-            ),
-
-            discord.SelectOption(
-                label="Game Commands",
-                description="Gaming utilities and statistics",
-                emoji="🎮",
-                value="game"
-            ),
-            discord.SelectOption(
-                label="Team Commands",
-                description="Team management and recruitment",
-                emoji="👥",
-                value="team"
-            ),
-            discord.SelectOption(
-                label="Utility Commands",
-                description="General utility and helper commands",
-                emoji="🛠️",
-                value="utility"
-            )
-        ]
+    def __init__(self, bot):
+        self.bot = bot
+        
+        # Define categories
+        self.categories = {
+            "ai": {"label": "AI・会話", "emoji": "🤖", "desc": "AIチャット、質問、検索"},
+            "profile": {"label": "プロフィール", "emoji": "👤", "desc": "ユーザープロフィールの管理"},
+            "knowledge": {"label": "共有知識", "emoji": "📚", "desc": "サーバー固有の知識管理"},
+            "voice": {"label": "音声・音楽", "emoji": "🎵", "desc": "読み上げ、音楽再生"},
+            "creative": {"label": "クリエイティブ", "emoji": "🎨", "desc": "画像生成、創作支援"},
+            "game": {"label": "ゲーム", "emoji": "🎮", "desc": "ゲーム連携、サイコロ"},
+            "dev": {"label": "開発・進化", "emoji": "⚙️", "desc": "新機能開発、システム進化"},
+            "utility": {"label": "ユーティリティ", "emoji": "🛠️", "desc": "その他便利機能"}
+        }
+        
+        options = []
+        for key, data in self.categories.items():
+            options.append(discord.SelectOption(
+                label=data["label"],
+                description=data["desc"],
+                emoji=data["emoji"],
+                value=key
+            ))
         
         super().__init__(
-            placeholder="Select a command category...",
+            placeholder="カテゴリを選択してください...",
             min_values=1,
             max_values=1,
             options=options
         )
 
     async def callback(self, interaction: discord.Interaction):
-        category = self.values[0]
+        category_key = self.values[0]
+        category_data = self.categories.get(category_key)
         
-        if category in HELP_DATA:
-            embed = discord.Embed(
-                title=f"📖 {HELP_DATA[category]['title']} Commands",
-                description=HELP_DATA[category]['description'],
-                color=EMBED_COLOR
-            )
+        if not category_data:
+            return
+
+        # Collect commands for this category
+        commands_list = []
+        for cog_name, cog in self.bot.cogs.items():
+            for command in cog.get_commands():
+                if command.hidden:
+                    continue
+                
+                # Categorize logic (same as utility_cog)
+                cat = "utility"
+                if command.name in ['generate_feature', 'dev', 'evolve', 'trigger_evolution']:
+                    cat = "dev"
+                else:
+                    cog_name_lower = cog_name.lower()
+                    if 'music' in cog_name_lower or 'voice' in cog_name_lower:
+                        cat = "voice"
+                    elif 'image' in cog_name_lower or 'draw' in cog_name_lower:
+                        cat = "creative"
+                    elif 'ai' in cog_name_lower or 'chat' in cog_name_lower:
+                        cat = "ai"
+                    elif 'profile' in cog_name_lower:
+                        cat = "profile"
+                    elif 'knowledge' in cog_name_lower:
+                        cat = "knowledge"
+                    elif 'game' in cog_name_lower or 'minecraft' in cog_name_lower:
+                        cat = "game"
+                    elif 'dev' in cog_name_lower or 'evolution' in cog_name_lower:
+                        cat = "dev"
+                
+                if cat == category_key:
+                    commands_list.append(command)
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"{category_data['emoji']} {category_data['label']} コマンド",
+            description=f"{category_data['desc']}に関するコマンド一覧です。",
+            color=0x00ff00
+        )
+        
+        if commands_list:
+            # Sort by name
+            commands_list.sort(key=lambda x: x.name)
             
-            for command in HELP_DATA[category]['commands']:
+            for cmd in commands_list:
+                aliases = f" ({', '.join(cmd.aliases)})" if cmd.aliases else ""
+                # Use docstring first line as help
+                help_text = cmd.help.split('\n')[0] if cmd.help else "説明なし"
                 embed.add_field(
-                    name=f"`{COMMAND_PREFIX}{command['name']}`",
-                    value=f"{command['description']}\n*Usage:* `{command['usage']}`",
+                    name=f"`!{cmd.name}{aliases}`",
+                    value=help_text,
                     inline=False
                 )
-            
-            await interaction.response.edit_message(embed=embed, view=self.view)
         else:
-            await interaction.response.send_message(
-                "❌ Category not found!", ephemeral=True
-            )
+            embed.description = "このカテゴリにはコマンドがありません。"
+            
+        await interaction.response.edit_message(embed=embed, view=self.view)
 
 
 
