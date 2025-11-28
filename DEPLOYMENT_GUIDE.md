@@ -60,6 +60,26 @@ git push -u origin main
 
 4. 「Create Monitor」をクリック
 
+### 5. Replitでの24時間稼働設定 (現在の環境)
+
+ReplitでBotを常時起動させるには、以下の手順を行います。
+
+1.  **Webサーバーの確認**:
+    - 既に `keep_alive.py` が組み込まれており、Bot起動時にWebサーバーも立ち上がります。
+    - Replitの画面右上に「WebView」という小さなウィンドウが表示され、URL（例: `https://stella-discord-bot--swampchihaya.repl.co`）が表示されているはずです。このURLをコピーします。
+
+2.  **UptimeRobotの設定**:
+    - [UptimeRobot](https://uptimerobot.com)にログイン。
+    - 「Add New Monitor」をクリック。
+    - **Monitor Type**: `HTTP(s)`
+    - **Friendly Name**: `STELLA Replit`
+    - **URL**: 先ほどコピーしたReplitのURL
+    - **Monitoring Interval**: `5 minutes`
+    - 「Create Monitor」をクリック。
+
+これで、UptimeRobotが5分ごとにReplitのWebサーバーにアクセスし、Botがスリープするのを防ぎます。
+
+
 ## ⚠️ 重要な注意事項
 
 ### Renderの無料プランの制限
