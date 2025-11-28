@@ -61,9 +61,20 @@ class RiddleCog(commands.Cog):
             }
         ]
 
+        self.active_sessions = set()
+
     @commands.command(name="riddle", aliases=["nazo", "試練"])
     async def start_riddle(self, ctx):
         """ファウストの試練を開始します"""
+        if ctx.channel.id in self.active_sessions:
+            await ctx.send("既に試練は始まっている... (進行中の試練をリセットします)")
+            # In a real implementation we might want to cancel the task, 
+            # but for now we just let the new one take over visually or wait.
+            # Since we can't easily cancel the *other* invocation's wait_for without storing the task object,
+            # we will just proceed. The old one will eventually timeout or fail check.
+            pass
+        
+        self.active_sessions.add(ctx.channel.id)
         
         # Intro
         embed = discord.Embed(
@@ -81,66 +92,69 @@ class RiddleCog(commands.Cog):
         await ctx.send(embed=embed)
         await asyncio.sleep(2)
 
-        for i, stage in enumerate(self.riddles):
-            # Ask Question
-            embed = discord.Embed(
-                title=f"§ {stage['title']}",
-                description=f"```fix\n{stage['question']}\n```\n\n> 答えを入力してください...",
-                color=0x9b59b6 # Purple/Mystic
-            )
-            embed.set_footer(text=f"Phase {i+1}/{len(self.riddles)}")
-            question_msg = await ctx.send(embed=embed)
-
-            def check(m):
-                return m.author == ctx.author and m.channel == ctx.channel
-
-            try:
-                # Wait for answer
-                while True:
-                    user_msg = await self.bot.wait_for('message', check=check, timeout=60.0)
-                    content = user_msg.content.strip().lower()
-                    
-                    if any(ans in content for ans in stage['answers']):
-                        # Correct
-                        await user_msg.add_reaction("✅")
-                        success_embed = discord.Embed(
-                            description=f"**正解。**\n真理へと一歩近づいた。",
-                            color=0x00FF00
-                        )
-                        await ctx.send(embed=success_embed)
-                        await asyncio.sleep(1.5)
-                        break
-                    else:
-                        # Incorrect
-                        await user_msg.add_reaction("❌")
-                        # Optional: Give hint on fail? Or just let them retry?
-                        # Let's let them retry within the timeout
-            
-            except asyncio.TimeoutError:
-                timeout_embed = discord.Embed(
-                    title="⌛ Time Expired",
-                    description="時は無慈悲に過ぎ去った。\n試練は失敗に終わった。",
-                    color=0xFF0000
+        try:
+            for i, stage in enumerate(self.riddles):
+                # Ask Question
+                embed = discord.Embed(
+                    title=f"§ {stage['title']}",
+                    description=f"```fix\n{stage['question']}\n```\n\n> 答えを入力してください...",
+                    color=0x9b59b6 # Purple/Mystic
                 )
-                await ctx.send(embed=timeout_embed)
-                return
+                embed.set_footer(text=f"Phase {i+1}/{len(self.riddles)}")
+                question_msg = await ctx.send(embed=embed)
 
-        # Completion
-        final_embed = discord.Embed(
-            title="✨ Trial Completed",
-            description=(
-                "見事だ。\n"
-                "林檎は知恵から始まり、芸術となり、糧となり、貨幣となり、\n"
-                "ついには悪魔を招き入れた。\n\n"
-                "汝もまた、その意味を知る者なり。"
-            ),
-            color=0xF1C40F # Gold
-        )
-        final_embed.set_image(url="https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Mephistopheles_by_Mark_Antokolsky.jpg/480px-Mephistopheles_by_Mark_Antokolsky.jpg") # Public domain Mephistopheles statue image if valid, or just generic
-        # Removing image to be safe and use local assets or just text
-        final_embed.set_image(url=None)
+                def check(m):
+                    return m.author == ctx.author and m.channel == ctx.channel
+
+                try:
+                    # Wait for answer
+                    while True:
+                        user_msg = await self.bot.wait_for('message', check=check, timeout=60.0)
+                        content = user_msg.content.strip().lower()
+                        
+                        if any(ans in content for ans in stage['answers']):
+                            # Correct
+                            await user_msg.add_reaction("✅")
+                            success_embed = discord.Embed(
+                                description=f"**正解。**\n真理へと一歩近づいた。",
+                                color=0x00FF00
+                            )
+                            await ctx.send(embed=success_embed)
+                            await asyncio.sleep(1.5)
+                            break
+                        else:
+                            # Incorrect
+                            await user_msg.add_reaction("❌")
+                            # Optional: Give hint on fail? Or just let them retry?
+                            # Let's let them retry within the timeout
+                
+                except asyncio.TimeoutError:
+                    timeout_embed = discord.Embed(
+                        title="⌛ Time Expired",
+                        description="時は無慈悲に過ぎ去った。\n試練は失敗に終わった。",
+                        color=0xFF0000
+                    )
+                    await ctx.send(embed=timeout_embed)
+                    return
+
+            # Completion
+            final_embed = discord.Embed(
+                title="✨ Trial Completed",
+                description=(
+                    "見事だ。\n"
+                    "林檎は知恵から始まり、芸術となり、糧となり、貨幣となり、\n"
+                    "ついには悪魔を招き入れた。\n\n"
+                    "汝もまた、その意味を知る者なり。"
+                ),
+                color=0xF1C40F # Gold
+            )
+            final_embed.set_image(url=None)
+            
+            await ctx.send(embed=final_embed)
         
-        await ctx.send(embed=final_embed)
+        finally:
+            if ctx.channel.id in self.active_sessions:
+                self.active_sessions.remove(ctx.channel.id)
 
 async def setup(bot):
     await bot.add_cog(RiddleCog(bot))
