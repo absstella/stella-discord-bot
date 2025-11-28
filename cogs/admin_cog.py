@@ -72,6 +72,32 @@ class AdminLoginModal(discord.ui.Modal, title="システム管理者ログイン
             logger.info(f"Secret RPG trigger activated by user {interaction.user.id}")
             return
 
+        # Glitch Mode Activation
+        if password_input == "725578":
+            if hasattr(self.bot, 'glitch_manager'):
+                self.bot.glitch_manager.set_enabled(True)
+                await interaction.response.send_message(
+                    "⚠️ **SYSTEM FAILURE INITIATED** ⚠️\nGlitch Mode has been ENABLED for all users.\nUse `!repair` to attempt restoration.",
+                    ephemeral=True
+                )
+                logger.warning("Glitch Mode ENABLED by admin")
+            else:
+                await interaction.response.send_message("❌ Glitch Manager not loaded.", ephemeral=True)
+            return
+
+        # Glitch Mode Deactivation
+        if password_input == "835682":
+            if hasattr(self.bot, 'glitch_manager'):
+                self.bot.glitch_manager.set_enabled(False)
+                await interaction.response.send_message(
+                    "✅ **SYSTEM RESTORED**\nGlitch Mode has been DISABLED.\nAll systems returning to normal parameters.",
+                    ephemeral=True
+                )
+                logger.info("Glitch Mode DISABLED by admin")
+            else:
+                await interaction.response.send_message("❌ Glitch Manager not loaded.", ephemeral=True)
+            return
+
         if password_input == SYSTEM_ACCESS_PASSWORD:
             # Grant admin access
             ai_cog = self.bot.get_cog('AICog')

@@ -94,6 +94,8 @@ class StellaBot(commands.Bot):
                 'cogs.reaction_cog',
                 'cogs.code_executor_cog',
                 'cogs.admin_cog',
+                'cogs.glitch_cog',
+                'cogs.riddle_cog',
                 # 'cogs.openai_cog',
                 # 'cogs.image_cog',
                 # 'cogs.entertainment_cog',

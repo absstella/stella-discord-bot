@@ -1461,6 +1461,21 @@ class AICog(commands.Cog):
             
             # Send response
             logger.info(f"Final response being sent to user {ctx.author.id}: {ai_response[:100]}...")
+            
+            # Apply Glitch Effect if enabled
+            if hasattr(self.bot, 'glitch_manager') and self.bot.glitch_manager.is_enabled():
+                ai_response = self.bot.glitch_manager.apply_glitch(ai_response)
+                
+                # Create Glitch Embed
+                embed = discord.Embed(
+                    title="S.T.E.L.L.A. [SYSTEM FAILURE]",
+                    description=ai_response,
+                    color=0x000000
+                )
+                embed.set_footer(text="CRITICAL ERROR: 0xDEADBEEF")
+                await ctx.send(embed=embed)
+                return
+
             if len(ai_response) > 2000:
                 # Split long responses
                 chunks = [ai_response[i:i+2000] for i in range(0, len(ai_response), 2000)]
