@@ -6,12 +6,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 class GlitchManager:
-    def __init__(self, config_path="config/glitch_config.json"):
-        self.config_path = config_path
+    def __init__(self, config_path=None):
+        if config_path is None:
+            # Get absolute path to config file relative to this script
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.config_path = os.path.join(base_dir, '..', 'config', 'glitch_config.json')
+        else:
+            self.config_path = config_path
+            
         self.config = self.load_config()
 
     def load_config(self):
         if not os.path.exists(self.config_path):
+            logger.error(f"Config not found at: {self.config_path}")
             return {
                 "enabled": False,
                 "hints": ["System failure imminent."],
