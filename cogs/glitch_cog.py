@@ -203,10 +203,12 @@ class GlitchCog(commands.Cog):
 
     @commands.command(name="repair")
     async def repair_command(self, ctx):
-        """システム復旧作業を開始します (グリッチモード中のみ)"""
+        """システム復旧作業を開始します (実行するたびにリセットされます)"""
+        # Force enable glitch mode to allow replay/reset
         if not self.glitch_manager.is_enabled():
-            await ctx.send("システムは正常に稼働しています。復旧作業は不要です。\n(再プレイする場合は `/admin` -> `725578` または `!glitch_reset` を実行してください)")
-            return
+            self.glitch_manager.set_enabled(True)
+            # Optional: Send a message saying it's restarting?
+            # await ctx.send("システム再起動... グリッチモードを再有効化します。")
 
         view = RepairView(ctx, self.glitch_manager)
         await view.start()
