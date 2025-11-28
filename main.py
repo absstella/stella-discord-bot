@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import logging
@@ -5,10 +6,15 @@ import signal
 import time
 import psutil
 from typing import Set
+from datetime import datetime # Added as per user's Code Edit snippet
 from dotenv import load_dotenv
+from keep_alive import keep_alive # Added as per user's instruction
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Keep Alive for Replit/Render # Added as per user's Code Edit snippet
+keep_alive() # Added as per user's instruction
 
 import discord
 from discord.ext import commands, tasks
