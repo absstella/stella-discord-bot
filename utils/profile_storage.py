@@ -14,9 +14,12 @@ class ProfileStorage:
     """File-based profile storage for when database is unavailable"""
     
     def __init__(self, data_dir: str = "data/profiles"):
-        self.data_dir = data_dir
-        os.makedirs(data_dir, exist_ok=True)
-        logger.info(f"Profile storage initialized: {data_dir}")
+        # Use absolute path relative to the bot's root directory
+        # Assuming this file is in utils/ and bot root is one level up
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.data_dir = os.path.join(base_dir, data_dir)
+        os.makedirs(self.data_dir, exist_ok=True)
+        logger.info(f"Profile storage initialized: {self.data_dir}")
     
     def _get_profile_path(self, user_id: int, guild_id: int) -> str:
         """Get file path for user profile"""
@@ -45,13 +48,29 @@ class ProfileStorage:
             if not os.path.exists(file_path):
                 return None
             
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = None
+            # Try multiple encodings
+            encodings = ['utf-8', 'cp932', 'shift_jis']
+            
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        data = json.load(f)
+                    break # Success
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+            
+            if data is None:
+                logger.error(f"Failed to load profile for {user_id}: Could not decode file")
+                return None
             
             # Convert datetime strings back to datetime objects
             for date_field in ['created_at', 'updated_at', 'last_updated']:
                 if data.get(date_field):
-                    data[date_field] = datetime.fromisoformat(data[date_field])
+                    try:
+                        data[date_field] = datetime.fromisoformat(data[date_field])
+                    except ValueError:
+                        pass # Keep as string or ignore if invalid
             
             # Create UserProfile from loaded data
             profile = UserProfile(
@@ -93,10 +112,13 @@ class ProfileStorage:
         try:
             for filename in os.listdir(self.data_dir):
                 if filename.startswith(f"profile_{guild_id}_") and filename.endswith(".json"):
-                    user_id = int(filename.split('_')[2].split('.')[0])
-                    profile = self.load_profile(user_id, guild_id)
-                    if profile:
-                        profiles[user_id] = profile
+                    try:
+                        user_id = int(filename.split('_')[2].split('.')[0])
+                        profile = self.load_profile(user_id, guild_id)
+                        if profile:
+                            profiles[user_id] = profile
+                    except (IndexError, ValueError):
+                        continue
         except Exception as e:
             logger.error(f"Error loading all profiles: {e}")
         
