@@ -47,6 +47,7 @@ class StellaBot(commands.Bot):
         intents.voice_states = True
         intents.guilds = True
         intents.guild_messages = True
+        intents.members = True  # Required for DM and member management
         
         super().__init__(
             command_prefix='!',
@@ -90,26 +91,45 @@ class StellaBot(commands.Bot):
                 'cogs.utility_cog',
                 'cogs.voice_cog',
                 'cogs.image_gen_cog',
-                'cogs.minecraft_cog',
                 'cogs.reaction_cog',
                 'cogs.code_executor_cog',
                 'cogs.admin_cog',
+                'cogs.music_cog',
+
+                'cogs.reminder_cog',
+                'cogs.search_cog',
+                'cogs.translation_cog',
+                'cogs.personality_cog',
+                'cogs.backup_cog',
+                'cogs.stock_cog',
+                'cogs.akinator_cog',
+                'cogs.doppelganger_cog',
                 'cogs.glitch_cog',
                 'cogs.riddle_cog',
-                # 'cogs.openai_cog',
-                # 'cogs.image_cog',
-                # 'cogs.entertainment_cog',
-                # 'cogs.schedule_cog',
-                # 'cogs.translation_cog',
-                # 'cogs.summary_cog',
-                # 'cogs.automation_cog',
-                # 'cogs.realtime_cog',
-                # 'cogs.file_sharing_cog',
-                # 'cogs.speech_pattern_cog',
-                # 'cogs.voice_recognition_cog',
-                # 'cogs.discord_voice_integration_cog'
+                'cogs.birthday_cog',
+                'cogs.weird_cog',
+                'cogs.colosseum_cog',
+                'cogs.werewolf_cog',
+                'cogs.tabloid_cog',
+                'cogs.prank_cog',
+                'cogs.minecraft_cog',
+                'cogs.achievement_cog',
+                'cogs.advanced_game_cog',
+                'cogs.anonymous_cog',
+                'cogs.automation_cog',
+                'cogs.game_utility_cog',
+                'cogs.help_cog',
+                'cogs.party_game_cog',
+                'cogs.radio_cog',
+                'cogs.schedule_cog',
+                'cogs.speech_pattern_cog',
+                'cogs.summary_cog',
+                'cogs.team_cog',
+                'cogs.poll_cog',
+                'cogs.stats_cog',
             ]
             
+
             for cog in cogs_to_load:
                 try:
                     await self.load_extension(cog)
@@ -133,6 +153,8 @@ class StellaBot(commands.Bot):
         except Exception as e:
             logger.error(f"Setup failed: {e}")
             raise
+
+
 
     async def on_ready(self):
         """Called when the bot is ready"""

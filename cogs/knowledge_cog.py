@@ -19,7 +19,12 @@ class KnowledgeCog(commands.Cog):
         self.knowledge_storage = GuildKnowledgeStorage()
         logger.info("Knowledge Cog initialized")
     
-    @commands.hybrid_command(name="knowledge_add", aliases=["kadd", "共有記憶"])
+    @commands.hybrid_group(name="knowledge", description="Guild knowledge management commands")
+    async def knowledge_group(self, ctx):
+        """Guild knowledge management commands"""
+        await ctx.send_help(ctx.command)
+
+    @knowledge_group.command(name="add", aliases=["kadd", "共有記憶"])
     async def add_knowledge(self, ctx, category: str, title: str, *, content: str):
         """Add knowledge to guild shared knowledge base (!kadd category title content)"""
         try:
@@ -58,7 +63,7 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error adding knowledge: {e}")
             await ctx.reply("❌ 知識の追加中にエラーが発生しました。")
     
-    @commands.hybrid_command(name="knowledge_search", aliases=["ksearch", "共有検索"])
+    @knowledge_group.command(name="search", aliases=["ksearch", "共有検索"])
     async def search_knowledge(self, ctx, *, query: str = None):
         """Search guild knowledge base (!ksearch query)"""
         try:
@@ -118,7 +123,7 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error searching knowledge: {e}")
             await ctx.reply("❌ 知識の検索中にエラーが発生しました。")
     
-    @commands.hybrid_command(name="knowledge_stats", aliases=["kstats", "共有統計"])
+    @knowledge_group.command(name="stats", aliases=["kstats", "共有統計"])
     async def knowledge_stats(self, ctx):
         """Show guild knowledge base statistics (!kstats)"""
         try:
@@ -173,7 +178,7 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error getting knowledge stats: {e}")
             await ctx.reply("❌ 統計の取得中にエラーが発生しました。")
     
-    @commands.hybrid_command(name="knowledge_categories", aliases=["kcats", "共有カテゴリ"])
+    @knowledge_group.command(name="categories", aliases=["kcats", "共有カテゴリ"])
     async def knowledge_categories(self, ctx):
         """Show all knowledge categories (!kcats)"""
         try:
@@ -200,7 +205,7 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error getting categories: {e}")
             await ctx.reply("❌ カテゴリの取得中にエラーが発生しました。")
     
-    @commands.hybrid_command(name="knowledge_help", aliases=["khelp", "共有ヘルプ"])
+    @knowledge_group.command(name="help", aliases=["khelp", "共有ヘルプ"])
     async def knowledge_help(self, ctx):
         """Show knowledge system help (!khelp)"""
         embed = discord.Embed(
@@ -240,7 +245,7 @@ class KnowledgeCog(commands.Cog):
         )
         
         await ctx.reply(embed=embed)
-    @commands.hybrid_command(name="knowledge_list", aliases=["klist", "共有一覧"])
+    @knowledge_group.command(name="list", aliases=["klist", "共有一覧"])
     async def list_knowledge(self, ctx, category: str = None):
         """List all knowledge entries with IDs (!klist [category])"""
         try:
@@ -267,7 +272,7 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error listing knowledge: {e}")
             await ctx.reply("❌ エラーが発生しました。")
 
-    @commands.hybrid_command(name="knowledge_delete", aliases=["kdelete", "共有削除"])
+    @knowledge_group.command(name="delete", aliases=["kdelete", "共有削除"])
     async def delete_knowledge(self, ctx, knowledge_id: str):
         """Delete a knowledge entry by ID (!kdelete id)"""
         try:
@@ -290,7 +295,7 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error deleting knowledge: {e}")
             await ctx.reply("❌ エラーが発生しました。")
 
-    @commands.hybrid_command(name="knowledge_edit", aliases=["kedit", "共有編集"])
+    @knowledge_group.command(name="edit", aliases=["kedit", "共有編集"])
     async def edit_knowledge(self, ctx, knowledge_id: str, *, new_content: str):
         """Edit a knowledge entry (!kedit id new_content)"""
         try:
@@ -303,11 +308,11 @@ class KnowledgeCog(commands.Cog):
             logger.error(f"Error editing knowledge: {e}")
             await ctx.reply("❌ エラーが発生しました。")
 
-    @app_commands.command(name="kmanage", description="共有知識管理パネルを開く")
-    async def kmanage(self, interaction: discord.Interaction):
+    @knowledge_group.command(name="manage", description="共有知識管理パネルを開く")
+    async def kmanage(self, ctx):
         """Open knowledge management panel"""
-        view = KnowledgeManagementView(self)
-        await interaction.response.send_message("📚 **共有知識管理パネル**", view=view, ephemeral=True)
+        view = KnowledgeManagementView(self, ctx.guild.id)
+        await ctx.send("📚 **共有知識管理パネル**", view=view, ephemeral=True)
 
 class KnowledgeManagementView(discord.ui.View):
     def __init__(self, cog, guild_id):

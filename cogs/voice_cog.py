@@ -34,7 +34,7 @@ class VoiceCog(commands.Cog):
         else:
             logger.info("VOICEVOX not available, falling back to gTTS")
     
-    @commands.hybrid_command(name='join', aliases=['vc'])
+    @commands.hybrid_command(name='join', aliases=['connect'])
     async def join(self, ctx):
         """ボイスチャンネルに参加します"""
         if not ctx.author.voice:

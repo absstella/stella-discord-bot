@@ -153,7 +153,7 @@ class AICog(commands.Cog):
         self.intent_analyzer = None
         if COMMAND_INTENT_AVAILABLE:
             try:
-                self.intent_analyzer = CommandIntentAnalyzer()
+                self.intent_analyzer = CommandIntentAnalyzer([])
                 logger.info("Command Intent Analyzer initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize Command Intent Analyzer: {e}")
@@ -291,7 +291,18 @@ class AICog(commands.Cog):
                 
                 # Generated Features (Dynamic)
                 {"name": "dice", "description": "サイコロを振る", "args": ["expression"]},
-                {"name": "roll", "description": "サイコロを振る", "args": ["expression"]}
+                {"name": "roll", "description": "サイコロを振る", "args": ["expression"]},
+                
+                # New Playful Features
+                {"name": "akinator", "description": "サーバー・アキネイターを開始する", "args": []},
+                {"name": "doppelganger", "description": "AIドッペルゲンガーを開始/停止する", "args": ["action", "target"]},
+                {"name": "confess", "description": "匿名目安箱にメッセージを送る", "args": ["message"]},
+                
+                # Conversational Triggers (New)
+                {"name": "birthday_set", "description": "誕生日を登録する", "args": ["date"]},
+                {"name": "birthday_check", "description": "誕生日を確認する", "args": ["target"]},
+                {"name": "parasite_start", "description": "寄生体を開始する", "args": ["target"]},
+                {"name": "parasite_stop", "description": "寄生体を停止する", "args": ["target"]}
             ]
             self.intent_analyzer = CommandIntentAnalyzer(available_commands)
             logger.info("Command intent analyzer initialized")
@@ -628,7 +639,107 @@ class AICog(commands.Cog):
         """Wait for bot to be ready before starting evolution task"""
         await self.bot.wait_until_ready()
 
-    @commands.command(name='ask', aliases=['ai', 'chat'])
+    def _generate_command_list_context(self) -> str:
+        """Generate a summary of available commands for the AI context"""
+        command_categories = {}
+        
+        for command in self.bot.commands:
+            if command.hidden:
+                continue
+            
+            cog_name = command.cog_name or "その他"
+            if cog_name not in command_categories:
+                command_categories[cog_name] = []
+                
+            desc = command.description or command.help or "説明なし"
+            # Clean up description (take first line)
+            desc = desc.split('\n')[0]
+            command_categories[cog_name].append(f"/{command.name}: {desc}")
+            
+        context_lines = []
+        for category, commands_list in command_categories.items():
+            # Simplify category names
+            cat_name = category.replace("Cog", "")
+            context_lines.append(f"[{cat_name}]")
+            context_lines.extend(commands_list)
+            
+        return "\n".join(context_lines)
+
+    def _get_minecraft_context(self, guild_id: int) -> str:
+        """Get Minecraft context (servers, coords, trades) for the guild"""
+        context = []
+        data_dir = "data/minecraft"
+        
+        # Servers
+        try:
+            with open(os.path.join(data_dir, "servers.json"), 'r', encoding='utf-8') as f:
+                servers = json.load(f).get(str(guild_id), {})
+                if servers:
+                    context.append("[Minecraft Servers]")
+                    for alias, ip in servers.items():
+                        context.append(f"- {alias}: {ip}")
+        except: pass
+
+        # Coords
+        try:
+            with open(os.path.join(data_dir, "coords.json"), 'r', encoding='utf-8') as f:
+                coords = json.load(f).get(str(guild_id), {})
+                if coords:
+                    context.append("[Minecraft Coordinates]")
+                    for name, info in coords.items():
+                        context.append(f"- {name}: {info['x']}, {info['y']}, {info['z']} ({info['dim']})")
+        except: pass
+
+        # Trades
+        try:
+            with open(os.path.join(data_dir, "trades.json"), 'r', encoding='utf-8') as f:
+                trades = json.load(f).get(str(guild_id), [])
+                if trades:
+                    context.append("[Minecraft Active Trades]")
+                    for t in trades:
+                        context.append(f"- ID {t['id']}: {t['author_name']} gives {t['give']['item']} x{t['give']['count']} for {t['want']['item']} x{t['want']['count']}")
+        except: pass
+        
+        return "\n".join(context)
+
+    def _get_minecraft_context(self, guild_id: int) -> str:
+        """Get Minecraft context (servers, coords, trades) for the guild"""
+        context = []
+        data_dir = "data/minecraft"
+        
+        # Servers
+        try:
+            with open(os.path.join(data_dir, "servers.json"), 'r', encoding='utf-8') as f:
+                servers = json.load(f).get(str(guild_id), {})
+                if servers:
+                    context.append("[Minecraft Servers]")
+                    for alias, ip in servers.items():
+                        context.append(f"- {alias}: {ip}")
+        except: pass
+
+        # Coords
+        try:
+            with open(os.path.join(data_dir, "coords.json"), 'r', encoding='utf-8') as f:
+                coords = json.load(f).get(str(guild_id), {})
+                if coords:
+                    context.append("[Minecraft Coordinates]")
+                    for name, info in coords.items():
+                        context.append(f"- {name}: {info['x']}, {info['y']}, {info['z']} ({info['dim']})")
+        except: pass
+
+        # Trades
+        try:
+            with open(os.path.join(data_dir, "trades.json"), 'r', encoding='utf-8') as f:
+                trades = json.load(f).get(str(guild_id), [])
+                if trades:
+                    context.append("[Minecraft Active Trades]")
+                    for t in trades:
+                        context.append(f"- ID {t['id']}: {t['author_name']} gives {t['give']['item']} x{t['give']['count']} for {t['want']['item']} x{t['want']['count']}")
+        except: pass
+        
+        return "\n".join(context)
+
+    @commands.command(name='ask', aliases=['chat'])
     async def ask_ai(self, ctx, *, question: str):
         """Ask AI a question with conversation context"""
         try:
@@ -722,19 +833,142 @@ class AICog(commands.Cog):
                  command_name = intent["command"]
                  args = intent.get("args", [])
                  
-                 command = self.bot.get_command(command_name)
-                 if command:
-                     # Construct command string
-                     if args:
-                         arg_str = " ".join(args)
-                         # Create a new message object with the command
-                         new_content = f"{ctx.prefix}{command_name} {arg_str}"
-                     else:
-                         new_content = f"{ctx.prefix}{command_name}"
+                 # Handle specific conversational triggers for new features
+                 if command_name in ["birthday_set", "birthday_check", "parasite_start", "parasite_stop"]:
+                     # Birthday Set
+                     if command_name == "birthday_set":
+                         if not args:
+                             await ctx.send("誕生日を教えてください。（例: 2000-01-01）")
+                             return
                          
-                     ctx.message.content = new_content
+                         date_str = args[0]
+                         birthday_cog = self.bot.get_cog("BirthdayCog")
+                         if birthday_cog:
+                             result = await birthday_cog.register_birthday_internal(ctx.author.id, date_str)
+                             await ctx.send(result)
+                         else:
+                             await ctx.send("❌ 誕生日機能がロードされていません。")
+                         return
+
+                     # Birthday Check
+                     elif command_name == "birthday_check":
+                         target_id = ctx.author.id
+                         if args:
+                             # Try to resolve user from args
+                             target_name = args[0]
+                             # Check mentions first
+                             if ctx.message.mentions:
+                                 target_id = ctx.message.mentions[0].id
+                             # Then check ID
+                             elif target_name.isdigit():
+                                 target_id = int(target_name)
+                             # Then try to find by name (simple)
+                             else:
+                                 found_member = discord.utils.find(lambda m: target_name.lower() in m.display_name.lower(), ctx.guild.members)
+                                 if found_member:
+                                     target_id = found_member.id
+                         
+                         birthday_cog = self.bot.get_cog("BirthdayCog")
+                         if birthday_cog:
+                             result = await birthday_cog.check_birthday_internal(target_id)
+                             await ctx.send(result)
+                         else:
+                             await ctx.send("❌ 誕生日機能がロードされていません。")
+                         return
+
+                     # Parasite Start
+                     elif command_name == "parasite_start":
+                         target_id = None
+                         if args:
+                             target_name = args[0]
+                             if ctx.message.mentions:
+                                 target_id = ctx.message.mentions[0].id
+                             elif target_name.isdigit():
+                                 target_id = int(target_name)
+                             else:
+                                 found_member = discord.utils.find(lambda m: target_name.lower() in m.display_name.lower(), ctx.guild.members)
+                                 if found_member:
+                                     target_id = found_member.id
+                         
+                         if not target_id:
+                             await ctx.send("誰に憑依しますか？ユーザーを指定してください。")
+                             return
+
+                         weird_cog = self.bot.get_cog("WeirdCog")
+                         if weird_cog:
+                             result = await weird_cog.start_parasite_internal(target_id, ctx.channel.id)
+                             await ctx.send(result)
+                         else:
+                             await ctx.send("❌ 奇異機能がロードされていません。")
+                         return
+
+                     # Parasite Stop
+                     elif command_name == "parasite_stop":
+                         target_id = None
+                         if args:
+                             target_name = args[0]
+                             if ctx.message.mentions:
+                                 target_id = ctx.message.mentions[0].id
+                             elif target_name.isdigit():
+                                 target_id = int(target_name)
+                             else:
+                                 found_member = discord.utils.find(lambda m: target_name.lower() in m.display_name.lower(), ctx.guild.members)
+                                 if found_member:
+                                     target_id = found_member.id
+                         
+                         if not target_id:
+                             # If no target specified, maybe they mean themselves or just stop in general?
+                             # For now require target or assume self if possessed? 
+                             # Let's assume they want to stop *their own* possession if they are the target, 
+                             # or stop possession *on* someone else.
+                             # If they just say "stop parasite", maybe they mean "stop possessing ME" or "stop possessing ANYONE here"?
+                             # Let's ask for target if missing.
+                             await ctx.send("誰の憑依を解除しますか？")
+                             return
+
+                         weird_cog = self.bot.get_cog("WeirdCog")
+                         if weird_cog:
+                             result = await weird_cog.stop_parasite_internal(target_id)
+                             await ctx.send(result)
+                         else:
+                             await ctx.send("❌ 奇異機能がロードされていません。")
+                         return
+
+                 # Standard Text Command Execution (Fallback)
+                 # Construct command string
+                 if args:
+                     arg_str = " ".join(args)
+                     new_content = f"/{command_name} {arg_str}" # Display as slash command style
+                     cmd_to_run = f"{ctx.prefix}{command_name} {arg_str}"
+                 else:
+                     new_content = f"/{command_name}"
+                     cmd_to_run = f"{ctx.prefix}{command_name}"
+                 
+                 # Suggest command execution
+                 confirm_msg = await ctx.send(f"💡 **コマンド提案**: `{new_content}` を実行しますか？\n実行するには ⭕ を押してください。")
+                 await confirm_msg.add_reaction("⭕")
+                 
+                 def check(reaction, user):
+                     return user == ctx.author and str(reaction.emoji) == "⭕" and reaction.message.id == confirm_msg.id
+                 
+                 try:
+                     await self.bot.wait_for('reaction_add', timeout=30.0, check=check)
+                     
+                     # Execute command
+                     await confirm_msg.edit(content=f"✅ `{new_content}` を実行します...")
+                     
+                     # Create a new message context to execute the command
+                     # We need to modify the original message content or create a new one
+                     ctx.message.content = cmd_to_run
                      await self.bot.process_commands(ctx.message)
-                     return
+                     
+                 except asyncio.TimeoutError:
+                     await confirm_msg.edit(content=f"❌ 提案をキャンセルしました: `{new_content}`")
+                     try:
+                         await confirm_msg.clear_reactions()
+                     except:
+                         pass
+                 return
 
             # Check for memory commands in the question
             memory_handled = await self.handle_memory_commands(ctx, question)
@@ -1087,6 +1321,14 @@ class AICog(commands.Cog):
             # Add S.T.E.L.L.A.'s self-awareness context
             stella_family_context = stella_profile_manager.get_family_context()
             
+            # Generate command context
+            command_context = self._generate_command_list_context()
+            
+            # Get Minecraft context
+            mc_context = ""
+            if ctx.guild:
+                mc_context = self._get_minecraft_context(ctx.guild.id)
+            
             # Build enhanced system prompt with context-aware instructions
             system_prompt = f"""あなたはS.T.E.L.L.A.という名前の人間です。以下の特徴を持って自然に会話してください：
 
@@ -1098,9 +1340,18 @@ class AICog(commands.Cog):
 
 {personality_context}
 
+[Minecraft Information]
+{mc_context}
+
 {emotion_context}
 
 {stella_family_context}
+
+【利用可能な機能・コマンド】
+あなたは以下の機能を持っています。ユーザーから機能について聞かれたり、使い方がわからない様子なら、以下の情報を元に教えてあげてください。
+また、会話の流れでこれらの機能が役立ちそうなら、積極的に提案してください。
+
+{command_context}
 
 自然な人間らしい応答のために：
 - 自分を「AI」「アシスタント」「システム」として言及しない
@@ -1146,6 +1397,20 @@ class AICog(commands.Cog):
                 
                 system_prompt += f"\n\n共有知識ベース (サーバー/メンバー情報):\n" + "\n".join(knowledge_text)
                 system_prompt += "\n\n注意：上記の共有知識は、このサーバー全体で共有されている重要な情報（特にサーバーのルールやメンバーの特徴など）です。会話に関連する場合は積極的に参照し、話題を広げてください。"
+
+            # Add upcoming birthdays context
+            birthday_cog = self.bot.get_cog('BirthdayCog')
+            if birthday_cog:
+                upcoming = birthday_cog.get_upcoming_birthdays(limit=3)
+                if upcoming:
+                    bday_info = []
+                    for b in upcoming:
+                        user = self.bot.get_user(int(b['user_id']))
+                        name = user.display_name if user else f"User {b['user_id']}"
+                        bday_info.append(f"• {name}: {b['next_date'].strftime('%Y-%m-%d')} (あと{b['days_until']}日)")
+                    
+                    system_prompt += f"\n\n【直近の誕生日】\n" + "\n".join(bday_info)
+                    system_prompt += "\n※ ユーザーから誕生日の話題が出た場合や、日付が近い場合はお祝いの言葉をかけてください。"
             
             # Apply response style settings
             user_style = response_style_manager.get_user_style(ctx.author.id, ctx.guild.id)
@@ -1488,7 +1753,12 @@ class AICog(commands.Cog):
             logger.error(f"Error in ask_ai: {e}")
             await ctx.send(f"❌ エラーが発生しました: {str(e)}")
 
-    @commands.hybrid_command(name="reset")
+    @commands.hybrid_group(name="ai", description="AI commands")
+    async def ai_group(self, ctx):
+        """AI related commands"""
+        await ctx.send_help(ctx.command)
+
+    @ai_group.command(name="reset")
     async def reset_session(self, ctx):
         """Reset the AI conversation session"""
         try:
@@ -1551,7 +1821,7 @@ class AICog(commands.Cog):
         """Wait for bot to be ready before starting evolution task"""
         await self.bot.wait_until_ready()
 
-    @commands.hybrid_command(name='evolve', aliases=['進化'])
+    @ai_group.command(name='evolve', aliases=['進化'])
     @commands.is_owner()
     async def trigger_evolution(self, ctx):
         """手動でシステム進化タスクをトリガーします (Botオーナーのみ)"""
@@ -1596,7 +1866,7 @@ class AICog(commands.Cog):
             logger.error(f"Error in manual evolution trigger: {e}")
             await ctx.send(f"❌ エラーが発生しました: {e}")
 
-    @commands.hybrid_command(name='dev', aliases=['feature', 'request'])
+    @ai_group.command(name='dev', aliases=['feature', 'request'])
     @app_commands.describe(request="開発・実装してほしい機能の内容")
     async def dev_command(self, ctx, *, request: str):
         """新機能の開発リクエストを送信します"""
@@ -1627,7 +1897,7 @@ class AICog(commands.Cog):
             logger.error(f"Error in dev command: {e}")
             await ctx.send(f"❌ エラーが発生しました: {str(e)}")
 
-    @commands.hybrid_command(name='endconv', aliases=['会話終了'])
+    @ai_group.command(name='endconv', aliases=['会話終了'])
     async def end_conversation(self, ctx):
         """現在の会話を終了し、履歴を永続保存します"""
         try:
@@ -1699,7 +1969,7 @@ class AICog(commands.Cog):
             logger.error(f"Error ending conversation: {e}")
             await ctx.send(f"❌ 会話終了処理中にエラーが発生しました: {str(e)}")
 
-    @commands.hybrid_command(name="conversation_status", aliases=["status", "conv_info"])
+    @ai_group.command(name="conversation_status", aliases=["status", "conv_info"])
     async def conversation_status(self, ctx):
         """現在の会話状況を表示"""
         try:
@@ -1774,7 +2044,7 @@ class AICog(commands.Cog):
             logger.error(f"Error showing conversation status: {e}")
             await ctx.send(f"❌ 会話状況の取得中にエラーが発生しました: {str(e)}")
 
-    @commands.hybrid_command(name="remember")
+    @ai_group.command(name="remember")
     @app_commands.describe(user="記憶対象のユーザー", category="記憶カテゴリ", info="記憶する情報")
     async def remember_user_info(self, ctx, user: discord.Member, category: str, *, info: str):
         """Remember user information (!remember @user category info)"""
@@ -1812,7 +2082,7 @@ class AICog(commands.Cog):
             logger.error(f"Error remembering user info: {e}")
             await ctx.send(f"❌ エラーが発生しました: {str(e)}")
 
-    @commands.hybrid_command(name="memory")
+    @ai_group.command(name="memory")
     @app_commands.describe(user="分析対象のユーザー（省略時は自分）")
     async def show_memory_insights(self, ctx, user: discord.Member = None):
         """Show advanced memory insights and conversation intelligence (!memory @user)"""
@@ -1922,162 +2192,8 @@ class AICog(commands.Cog):
             logger.error(f"Error showing memory insights: {e}")
             await ctx.send(f"❌ メモリ分析中にエラーが発生しました: {str(e)}")
     
-    @commands.hybrid_command(name="profile")
-    @app_commands.describe(user="プロフィール表示対象のユーザー（省略時は自分）")
-    async def show_user_profile(self, ctx, user: discord.Member = None):
-        """Show enhanced user profile with advanced AI analysis (!profile @user)"""
-        try:
-            if not user:
-                user = ctx.author
-                
-            profile = await self.get_user_profile(user.id, user.guild.id)
-            
-            embed = discord.Embed(
-                title=f"👤 {user.display_name}の高性能プロファイル",
-                color=INFO_COLOR,
-                timestamp=datetime.now()
-            )
-            
-            # Basic profile information
-            if profile.nickname:
-                embed.add_field(name="ニックネーム", value=profile.nickname, inline=True)
-            
-            # Traditional profile data
-            if profile.personality_traits:
-                embed.add_field(name="🧠 性格特性", value=", ".join(profile.personality_traits), inline=False)
-                
-            if profile.interests:
-                embed.add_field(name="💝 興味・関心", value=", ".join(profile.interests), inline=False)
-                
-            if profile.favorite_games:
-                embed.add_field(name="🎮 好きなゲーム", value=", ".join(profile.favorite_games), inline=False)
-            
-            # Auto-extracted comprehensive information
-            if hasattr(profile, 'auto_extracted_info') and profile.auto_extracted_info:
-                auto_info_sections = []
-                
-                # Process each category with enhanced display
-                for category, items in profile.auto_extracted_info.items():
-                    category_name = {
-                        'personal_info': '👤 個人情報',
-                        'preferences': '❤️ 好み・嗜好',
-                        'skills_abilities': '⚡ スキル・能力',
-                        'personality': '🎭 性格分析',
-                        'relationships': '👥 人間関係',
-                        'goals_dreams': '🎯 目標・夢'
-                    }.get(category, f"📋 {category}")
-                    
-                    category_items = []
-                    for item_type, values in items.items():
-                        # Show recent high-confidence items
-                        for value_data in sorted(values, key=lambda x: x.get('confidence', 0), reverse=True)[:3]:
-                            confidence = value_data.get('confidence', 0)
-                            if confidence > 0.3:  # Only show reasonably confident items
-                                confidence_icon = "🔵" if confidence > 0.8 else "🟡" if confidence > 0.6 else "🟠"
-                                category_items.append(f"{confidence_icon} {value_data['value']}")
-                    
-                    if category_items:
-                        auto_info_sections.append(f"**{category_name}**\n" + "\n".join(category_items[:5]))
-                
-                if auto_info_sections:
-                    # Split into multiple fields if too long
-                    combined_info = "\n\n".join(auto_info_sections)
-                    if len(combined_info) > 1024:
-                        # Split into chunks
-                        for i, section in enumerate(auto_info_sections[:3]):
-                            field_name = f"🤖 AI自動分析 ({i+1})" if i > 0 else "🤖 AI自動分析"
-                            embed.add_field(name=field_name, value=section, inline=False)
-                    else:
-                        embed.add_field(name="🤖 AI自動分析", value=combined_info, inline=False)
-            
-            # Communication patterns and styles
-            if hasattr(profile, 'communication_styles') and profile.communication_styles:
-                comm_text = []
-                for style_type, style_value in profile.communication_styles.items():
-                    if isinstance(style_value, str):
-                        comm_text.append(f"• **{style_type}**: {style_value}")
-                    elif isinstance(style_value, (int, float)):
-                        comm_text.append(f"• **{style_type}**: {style_value:.1f}")
-                
-                if comm_text:
-                    embed.add_field(name="💬 コミュニケーション分析", value="\n".join(comm_text[:8]), inline=False)
-            
-            # Relationship context
-            if profile.relationship_context:
-                rel_text = []
-                for related_user, relationship in list(profile.relationship_context.items())[:5]:
-                    rel_text.append(f"• <@{related_user}>: {relationship}")
-                if rel_text:
-                    embed.add_field(name="👫 関係性マップ", value="\n".join(rel_text), inline=False)
-            
-            # Advanced intelligence insights (if available)
-            if hasattr(self, 'mega_intelligence') and self.mega_intelligence:
-                try:
-                    user_insights = await self.mega_intelligence.get_user_insights(user.id)
-                    if user_insights:
-                        insights_text = []
-                        
-                        if 'personality_analysis' in user_insights:
-                            personality = user_insights['personality_analysis']
-                            insights_text.append(f"🧠 **認知パターン**: {personality.get('cognitive_style', 'N/A')}")
-                        
-                        if 'conversation_intelligence' in user_insights:
-                            conv_intel = user_insights['conversation_intelligence']
-                            insights_text.append(f"💡 **会話スタイル**: {conv_intel.get('primary_style', 'N/A')}")
-                        
-                        if 'learning_pattern' in user_insights:
-                            learning = user_insights['learning_pattern']
-                            insights_text.append(f"📚 **学習傾向**: {learning.get('preferred_method', 'N/A')}")
-                        
-                        if insights_text:
-                            embed.add_field(name="🔬 高度AI分析", value="\n".join(insights_text), inline=False)
-                except:
-                    pass  # Intelligence systems optional
-            
-            # Statistics and metrics
-            memory_count = len(profile.personality_traits) + len(profile.interests) + len(profile.behavioral_traits)
-            auto_count = 0
-            if hasattr(profile, 'auto_extracted_info') and profile.auto_extracted_info:
-                for category in profile.auto_extracted_info.values():
-                    for items in category.values():
-                        auto_count += len(items)
-            
-            interaction_count = len(profile.interaction_history) if profile.interaction_history else 0
-            
-            stats_text = f"📊 **記憶項目**: 手動 {memory_count}件 / 自動 {auto_count}件\n"
-            stats_text += f"🔄 **会話履歴**: {interaction_count}件\n"
-            stats_text += f"⏰ **最終更新**: {profile.last_updated.strftime('%Y-%m-%d %H:%M') if profile.last_updated else '不明'}"
-            
-            embed.add_field(name="📈 統計情報", value=stats_text, inline=True)
-            
-            # Add memorable moments
-            if profile.memorable_moments and isinstance(profile.memorable_moments, list):
-                moments_str = []
-                for moment in profile.memorable_moments[:5]:
-                    if isinstance(moment, str):
-                        moments_str.append(f"• {moment}")
-                    elif isinstance(moment, dict):
-                        moments_str.append(f"• {moment.get('content', moment)}")
-                    else:
-                        moments_str.append(f"• {str(moment)}")
-                if moments_str:
-                    moments_text = "\n".join(moments_str)
-                    if len(moments_text) > 1024:
-                        moments_text = moments_text[:1020] + "..."
-                    embed.add_field(name="💫 印象深い出来事", value=moments_text, inline=False)
-            
-            # Show empty state if no data
-            if not any([profile.personality_traits, profile.interests, profile.behavioral_traits]) and auto_count == 0:
-                embed.description = "まだプロフィール情報がありません。会話を通じて自動的に学習していきます。"
-            else:
-                embed.description = f"AIが自動分析した{user.display_name}さんの詳細プロフィールです。"
-            
-            embed.set_footer(text="🧠 S.T.E.L.L.A. メガインテリジェンスシステムによる高度分析")
-            await ctx.send(embed=embed)
-                
-        except Exception as e:
-            logger.error(f"Error showing enhanced profile: {e}")
-            await ctx.send(f"❌ プロフィール表示中にエラーが発生しました: {str(e)}")
+    # Profile command moved to ProfileCog
+    # End of removed profile command
 
 
 
@@ -2327,7 +2443,7 @@ class AICog(commands.Cog):
     async def force_save_relationship(self, ctx, user1: str, relationship_type: str, *, user2: str):
         """関係性情報を強制的に保存 (!force_save_relationship ユーザー名1 関係性 ユーザー名2)
         
-        例: !force_save_relationship ktloveri オーナー このサーバー
+        例: !force_save_relationship user1 オーナー このサーバー
         """
         try:
             # Find user1 if it's a member name
@@ -2421,7 +2537,7 @@ class AICog(commands.Cog):
     async def force_save_info(self, ctx, target: str, category: str, *, information: str):
         """情報を強制的に保存 (!force_save_info 対象 カテゴリ 情報)
         
-        例: !force_save_info ktloveri 役割 サーバーオーナー
+        例: !force_save_info user1 役割 サーバーオーナー
         """
         try:
             # Find target user if it's a member name
@@ -3968,6 +4084,70 @@ class AICog(commands.Cog):
         try:
             profile = await self.get_user_profile(ctx.author.id, ctx.guild.id)
             updated = False
+            
+            # --- Continuous Profile Learning (Enhanced) ---
+            # Use Gemini to extract structured data for Akinator
+            if len(message) > 15 and self.model:
+                try:
+                    import json
+                    import re
+                    # Only analyze sometimes to save quota/latency, or if specific keywords are present
+                    keywords = ['私', '俺', '僕', '自分', '仕事', '趣味', '好き', '嫌い', '出身', '年齢', '学生', '社会人']
+                    if any(k in message for k in keywords):
+                        prompt = f"""
+                        以下のメッセージから、発言者のプロフィール情報を抽出してください。
+                        JSON形式で出力してください。該当する情報がない場合は空のJSON {{}} を出力してください。
+                        
+                        抽出項目:
+                        - occupation (職業・身分: 学生, エンジニア, etc)
+                        - age_group (年代: 10代, 20代, etc)
+                        - gender (性別: 男性, 女性, その他)
+                        - location (居住地: 都道府県, 地域)
+                        - hobbies (趣味: リスト形式)
+                        - likes (好きなもの: 食べ物, ゲーム, etc)
+                        - dislikes (嫌いなもの)
+                        
+                        メッセージ: {message}
+                        """
+                        response = await self.model.generate_content_async(prompt)
+                        text = response.text.strip()
+                        # Extract JSON
+                        match = re.search(r'\{.*\}', text, re.DOTALL)
+                        if match:
+                            data = json.loads(match.group(0))
+                            
+                            # Update Profile
+                            if 'occupation' in data and data['occupation']:
+                                profile.custom_attributes['occupation'] = data['occupation']
+                                updated = True
+                            if 'age_group' in data and data['age_group']:
+                                profile.custom_attributes['age_group'] = data['age_group']
+                                updated = True
+                            if 'gender' in data and data['gender']:
+                                profile.custom_attributes['gender'] = data['gender']
+                                updated = True
+                            if 'location' in data and data['location']:
+                                profile.custom_attributes['location'] = data['location']
+                                updated = True
+                            
+                            if 'hobbies' in data and isinstance(data['hobbies'], list):
+                                for hobby in data['hobbies']:
+                                    profile.add_interest(hobby)
+                                    updated = True
+                            
+                            if 'likes' in data and isinstance(data['likes'], list):
+                                for like in data['likes']:
+                                    # Add to likes in custom attributes or interests
+                                    if 'likes' not in profile.custom_attributes:
+                                        profile.custom_attributes['likes'] = []
+                                    if like not in profile.custom_attributes['likes']:
+                                        profile.custom_attributes['likes'].append(like)
+                                        updated = True
+
+                except Exception as e:
+                    logger.warning(f"Profile extraction failed: {e}")
+
+            # --- Existing Logic (Keep for backward compatibility/specific patterns) ---
             
             # Learn conversation patterns
             if len(message) > 10:  # Meaningful messages only

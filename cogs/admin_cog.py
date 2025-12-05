@@ -7,6 +7,11 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Import for profile injection
+import json
+from database.models import UserProfile
+from utils.profile_storage import profile_storage
+
 class AdminLoginModal(discord.ui.Modal, title="システム管理者ログイン"):
     password = discord.ui.TextInput(
         label="パスワード",
@@ -96,6 +101,18 @@ class AdminLoginModal(discord.ui.Modal, title="システム管理者ログイン
                 logger.info("Glitch Mode DISABLED by admin")
             else:
                 await interaction.response.send_message("❌ Glitch Manager not loaded.", ephemeral=True)
+            return
+
+        # Minecraft Config Access
+        if password_input == "minecraft":
+            view = MinecraftConfigView(self.bot)
+            await interaction.response.send_message("⛏️ **Minecraft 連携設定**\nRCON接続情報を設定してください。", view=view, ephemeral=True)
+            return
+
+        # Gacha Management Access
+        if password_input == "gacha":
+            view = GachaManagementView(self.bot)
+            await interaction.response.send_message("🃏 **ガチャ管理パネル**\n操作を選択してください。", view=view, ephemeral=True)
             return
 
         if password_input == SYSTEM_ACCESS_PASSWORD:
@@ -193,6 +210,10 @@ class AdminControlPanel(discord.ui.View):
         
         await interaction.response.send_message("👤 **ユーザー管理**\n編集したいユーザーを選択してください。", view=ProfileUserSelectView(self.bot, profiles, interaction.guild_id), ephemeral=True)
 
+    @discord.ui.button(label="ガチャ管理", style=discord.ButtonStyle.success, emoji="🃏")
+    async def gacha_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🃏 **ガチャ管理パネル**\n操作を選択してください。", view=GachaManagementView(self.bot), ephemeral=True)
+
 class ProfileUserSelectView(discord.ui.View):
     def __init__(self, bot, profiles=None, guild_id=None):
         super().__init__(timeout=300)
@@ -236,6 +257,108 @@ class ProfileUserSelectView(discord.ui.View):
     @discord.ui.button(label="ID入力", style=discord.ButtonStyle.secondary, emoji="🔢", row=2)
     async def input_id_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ProfileUserSelectModal(self.bot))
+
+    @discord.ui.button(label="JSONインポート", style=discord.ButtonStyle.success, emoji="📥", row=2)
+    async def import_json_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "📥 **プロファイルJSONのインポート**\n"
+            "適用したいプロファイルJSONファイルを、このチャンネルにアップロード（送信）してください。\n"
+            "※ タイムアウト: 60秒",
+            ephemeral=True
+        )
+        
+        def check(m):
+            return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id and m.attachments
+
+        try:
+            msg = await self.bot.wait_for('message', check=check, timeout=60.0)
+            
+            # Process the first attachment
+            attachment = msg.attachments[0]
+            if not attachment.filename.endswith('.json'):
+                await interaction.followup.send("❌ エラー: JSONファイルではありません。", ephemeral=True)
+                return
+
+            try:
+                # Read file content
+                file_data = await attachment.read()
+                json_data = json.loads(file_data.decode('utf-8'))
+                
+                # Basic validation
+                if 'user_id' not in json_data:
+                    await interaction.followup.send("❌ エラー: JSONに `user_id` が含まれていません。", ephemeral=True)
+                    return
+
+                user_id = int(json_data['user_id'])
+                guild_id = int(json_data.get('guild_id', interaction.guild_id))
+                
+                # Ensure guild_id matches current guild if not specified or different (optional policy)
+                # For now, we trust the JSON or fallback to current guild
+                
+                # Convert strings back to datetime objects if needed, but UserProfile handles some?
+                # Actually UserProfile expects objects, but let's see if we can use the dict directly 
+                # or if we need to reconstruct. 
+                # profile_storage.load_profile does reconstruction.
+                # Let's try to reconstruct manually or use a helper if available.
+                # We can use the logic from profile_storage.load_profile but adapted for dict input
+                
+                # Helper to parse date
+                def parse_date(date_str):
+                    if not date_str: return None
+                    try:
+                        return datetime.fromisoformat(date_str)
+                    except:
+                        return None
+
+                # Create UserProfile object
+                # We need to be careful about fields that might be missing in older JSONs
+                
+                profile = UserProfile(
+                    user_id=user_id,
+                    guild_id=guild_id,
+                    nickname=json_data.get('nickname'),
+                    description=json_data.get('description'),
+                    personality_traits=json_data.get('personality_traits', []),
+                    interests=json_data.get('interests', []),
+                    favorite_games=json_data.get('favorite_games', []),
+                    memorable_moments=json_data.get('memorable_moments', []),
+                    custom_attributes=json_data.get('custom_attributes', {}),
+                    conversation_patterns=json_data.get('conversation_patterns', []),
+                    emotional_context=json_data.get('emotional_context', {}),
+                    interaction_history=json_data.get('interaction_history', []),
+                    learned_preferences=json_data.get('learned_preferences', {}),
+                    speech_patterns=json_data.get('speech_patterns', {}),
+                    reaction_patterns=json_data.get('reaction_patterns', {}),
+                    relationship_context=json_data.get('relationship_context', {}),
+                    behavioral_traits=json_data.get('behavioral_traits', []),
+                    communication_style=json_data.get('communication_style', {}),
+                    auto_extracted_info=json_data.get('auto_extracted_info', {}),
+                    communication_styles=json_data.get('communication_styles', {}),
+                    created_at=parse_date(json_data.get('created_at')) or datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                    last_updated=datetime.utcnow()
+                )
+                
+                # Save profile
+                if profile_storage.save_profile(profile):
+                    await interaction.followup.send(f"✅ ユーザーID `{user_id}` のプロファイルをインポートしました。", ephemeral=True)
+                    
+                    # Delete the uploaded message to keep channel clean (optional)
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
+                else:
+                    await interaction.followup.send("❌ エラー: プロファイルの保存に失敗しました。", ephemeral=True)
+
+            except json.JSONDecodeError:
+                await interaction.followup.send("❌ エラー: JSONファイルの形式が不正です。", ephemeral=True)
+            except Exception as e:
+                logger.error(f"Profile import error: {e}")
+                await interaction.followup.send(f"❌ エラーが発生しました: {e}", ephemeral=True)
+
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ タイムアウトしました。もう一度やり直してください。", ephemeral=True)
 
     async def open_profile_editor(self, interaction: discord.Interaction, user: discord.User):
         ai_cog = self.bot.get_cog('AICog')
@@ -545,6 +668,20 @@ class ProfileEditView(discord.ui.View):
         current = ", ".join(self.profile.favorite_games) if self.profile.favorite_games else ""
         await interaction.response.send_modal(ProfileEditModal(self.bot, self.profile, "favorite_games", "好きなゲーム (カンマ区切り)", default=current))
 
+    @discord.ui.button(label="誕生日", style=discord.ButtonStyle.secondary, emoji="🎂")
+    async def edit_birthday(self, interaction: discord.Interaction, button: discord.ui.Button):
+        birthday_cog = self.bot.get_cog('BirthdayCog')
+        if not birthday_cog:
+            await interaction.response.send_message("❌ BirthdayCogが見つかりません。", ephemeral=True)
+            return
+            
+        user_id = str(self.user.id)
+        current = ""
+        if user_id in birthday_cog.birthdays:
+            current = birthday_cog.birthdays[user_id]["date"]
+            
+        await interaction.response.send_modal(BirthdayEditModal(self.bot, self.user, current))
+
     @discord.ui.button(label="更新", style=discord.ButtonStyle.success, emoji="🔄")
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Reload profile
@@ -552,9 +689,69 @@ class ProfileEditView(discord.ui.View):
         if ai_cog:
             self.profile = await ai_cog.get_user_profile(self.user.id, interaction.guild_id)
             embed = self.create_profile_embed()
+            
+            # Also update birthday field in embed if we want to show it?
+            # The current create_profile_embed doesn't show birthday. 
+            # We should probably add it to create_profile_embed too.
+            birthday_cog = self.bot.get_cog('BirthdayCog')
+            if birthday_cog:
+                user_id = str(self.user.id)
+                if user_id in birthday_cog.birthdays:
+                    bday = birthday_cog.birthdays[user_id]["date"]
+                    embed.add_field(name="誕生日", value=bday, inline=True)
+            
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await interaction.response.send_message("❌ エラー: AIシステムが見つかりません。", ephemeral=True)
+
+class BirthdayEditModal(discord.ui.Modal, title="誕生日編集"):
+    def __init__(self, bot, user, current):
+        super().__init__()
+        self.bot = bot
+        self.user = user
+        
+        self.date_input = discord.ui.TextInput(
+            label="誕生日 (YYYY-MM-DD)",
+            placeholder="例: 2000-01-01 (削除する場合は 'remove')",
+            default=current,
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.date_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        value = self.date_input.value.strip()
+        birthday_cog = self.bot.get_cog('BirthdayCog')
+        
+        if not birthday_cog:
+            await interaction.response.send_message("❌ BirthdayCogが見つかりません。", ephemeral=True)
+            return
+
+        user_id = str(self.user.id)
+        
+        if value.lower() == "remove" or value == "":
+            if user_id in birthday_cog.birthdays:
+                del birthday_cog.birthdays[user_id]
+                birthday_cog.save_birthdays()
+                await interaction.response.send_message(f"🗑️ {self.user.display_name} の誕生日を削除しました。", ephemeral=True)
+            else:
+                await interaction.response.send_message("変更ありませんでした。", ephemeral=True)
+            return
+
+        try:
+            # Validate
+            from datetime import datetime
+            datetime.strptime(value, "%Y-%m-%d")
+            
+            birthday_cog.birthdays[user_id] = {
+                "date": value,
+                "last_celebrated": None
+            }
+            birthday_cog.save_birthdays()
+            await interaction.response.send_message(f"🎂 {self.user.display_name} の誕生日を `{value}` に設定しました。", ephemeral=True)
+            
+        except ValueError:
+            await interaction.response.send_message("❌ 日付形式が正しくありません。YYYY-MM-DD で入力してください。", ephemeral=True)
 
 class ProfileEditModal(discord.ui.Modal):
     def __init__(self, bot, profile, field, label, style=discord.TextStyle.short, default=None):
@@ -587,6 +784,236 @@ class ProfileEditModal(discord.ui.Modal):
         else:
             await interaction.response.send_message("❌ エラー: 保存に失敗しました。", ephemeral=True)
 
+class MinecraftConfigView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.config_file = "data/minecraft_config.json"
+
+    @discord.ui.button(label="接続設定 (RCON)", style=discord.ButtonStyle.primary, emoji="🔌")
+    async def config_rcon(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Load current config
+        current = {}
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    current = json.load(f)
+            except:
+                pass
+        
+        await interaction.response.send_modal(MinecraftConfigModal(self.bot, current))
+
+    @discord.ui.button(label="設定確認", style=discord.ButtonStyle.secondary, emoji="👀")
+    async def check_config(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # Mask password
+                display_data = data.copy()
+                if 'password' in display_data:
+                    display_data['password'] = "********"
+                
+                await interaction.response.send_message(f"⚙️ **現在の設定**:\n```json\n{json.dumps(display_data, indent=2)}\n```", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"❌ 設定読み込みエラー: {e}", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ 設定ファイルが存在しません。", ephemeral=True)
+
+class MinecraftConfigModal(discord.ui.Modal, title="Minecraft RCON設定"):
+    def __init__(self, bot, current_config):
+        super().__init__()
+        self.bot = bot
+        self.config_file = "data/minecraft_config.json"
+        
+        self.host = discord.ui.TextInput(
+            label="Host (IP)",
+            placeholder="localhost",
+            default=current_config.get('host', 'localhost'),
+            required=True
+        )
+        self.port = discord.ui.TextInput(
+            label="Port (RCON Port)",
+            placeholder="25575",
+            default=str(current_config.get('port', '25575')),
+            required=True
+        )
+        self.password = discord.ui.TextInput(
+            label="Password (RCON)",
+            placeholder="password",
+            default=current_config.get('password', ''),
+            required=True,
+            style=discord.TextStyle.short
+        )
+        
+        self.add_item(self.host)
+        self.add_item(self.port)
+        self.add_item(self.password)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            port_val = int(self.port.value)
+        except ValueError:
+            await interaction.response.send_message("❌ ポート番号は数字で入力してください。", ephemeral=True)
+            return
+
+        data = {
+            "host": self.host.value,
+            "port": port_val,
+            "password": self.password.value
+        }
+        
+        try:
+            if not os.path.exists("data"):
+                os.makedirs("data")
+                
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                
+            # Reload cog to apply changes
+            if 'cogs.minecraft_cog' in self.bot.extensions:
+                await self.bot.reload_extension('cogs.minecraft_cog')
+                
+            await interaction.response.send_message("✅ 設定を保存し、Minecraft連携機能をリロードしました。", ephemeral=True)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌ 保存エラー: {e}", ephemeral=True)
+
+class GachaManagementView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=300)
+        self.bot = bot
+
+    async def prompt_user_select(self, interaction: discord.Interaction, mode: str, title: str):
+        view = GachaUserSelectView(self.bot, mode)
+        await interaction.response.send_message(f"👤 **{title}**\n対象のユーザーを選択してください。", view=view, ephemeral=True)
+
+    @discord.ui.button(label="ポイント付与", style=discord.ButtonStyle.primary, emoji="➕")
+    async def add_points(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.prompt_user_select(interaction, "add_points", "ポイント付与")
+
+    @discord.ui.button(label="ポイント設定", style=discord.ButtonStyle.secondary, emoji="✏️")
+    async def set_points(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.prompt_user_select(interaction, "set_points", "ポイント設定")
+
+    @discord.ui.button(label="ユーザー確認", style=discord.ButtonStyle.success, emoji="👀")
+    async def check_user(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.prompt_user_select(interaction, "check", "ユーザー情報確認")
+
+    @discord.ui.button(label="カード操作", style=discord.ButtonStyle.danger, emoji="🃏")
+    async def manage_cards(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.prompt_user_select(interaction, "manage_cards", "カードインベントリ操作")
+
+class GachaUserSelectView(discord.ui.View):
+    def __init__(self, bot, mode):
+        super().__init__(timeout=60)
+        self.bot = bot
+        self.mode = mode
+        
+        self.select = discord.ui.UserSelect(placeholder="ユーザーを選択...", min_values=1, max_values=1)
+        self.select.callback = self.callback
+        self.add_item(self.select)
+
+    async def callback(self, interaction: discord.Interaction):
+        user = self.select.values[0]
+        
+        if self.mode == "check":
+            gacha_cog = self.bot.get_cog('GachaCog')
+            if not gacha_cog:
+                await interaction.response.send_message("❌ GachaCogが見つかりません。", ephemeral=True)
+                return
+            
+            try:
+                data = gacha_cog.get_player_data(user.id)
+                embed = discord.Embed(title=f"🃏 Gacha Data: {user.display_name}", color=discord.Color.blue())
+                embed.set_thumbnail(url=user.display_avatar.url)
+                embed.add_field(name="Points", value=f"{data['points']} SP", inline=True)
+                embed.add_field(name="Cards", value=f"{data['card_count']} 枚", inline=True)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"❌ エラー: {e}", ephemeral=True)
+                
+        elif self.mode == "add_points":
+            await interaction.response.send_modal(GachaPointModal(self.bot, "add", user))
+            
+        elif self.mode == "set_points":
+            await interaction.response.send_modal(GachaPointModal(self.bot, "set", user))
+            
+        elif self.mode == "manage_cards":
+            await interaction.response.send_modal(GachaInventoryModal(self.bot, user))
+
+class GachaInventoryModal(discord.ui.Modal, title="カードインベントリ操作"):
+    action = discord.ui.TextInput(label="操作 (grant/clear)", placeholder="grant [枚数] / clear", required=True)
+
+    def __init__(self, bot, user):
+        super().__init__()
+        self.bot = bot
+        self.user = user
+
+    async def on_submit(self, interaction: discord.Interaction):
+        gacha_cog = self.bot.get_cog('GachaCog')
+        if not gacha_cog:
+            await interaction.response.send_message("❌ GachaCogが見つかりません。", ephemeral=True)
+            return
+            
+        try:
+            act_str = self.action.value.lower().strip()
+            
+            if act_str == "clear":
+                gacha_cog.clear_inventory(self.user.id)
+                await interaction.response.send_message(f"🗑️ {self.user.display_name} のインベントリを全消去しました。", ephemeral=True)
+            
+            elif act_str.startswith("grant"):
+                try:
+                    count = int(act_str.split()[1])
+                except:
+                    count = 1
+                
+                added = gacha_cog.grant_cards(self.user.id, count)
+                await interaction.response.send_message(f"🎁 {self.user.display_name} に {added} 枚のカードを付与しました。", ephemeral=True)
+            
+            else:
+                await interaction.response.send_message("❌ 操作は 'grant [枚数]' または 'clear' で指定してください。", ephemeral=True)
+                
+        except Exception as e:
+            await interaction.response.send_message(f"❌ エラー: {e}", ephemeral=True)
+
+class GachaPointModal(discord.ui.Modal):
+    def __init__(self, bot, mode, user):
+        super().__init__(title="ガチャポイント管理")
+        self.bot = bot
+        self.mode = mode
+        self.user = user
+        
+        self.amount = discord.ui.TextInput(
+            label="ポイント数",
+            placeholder="例: 1000",
+            required=True
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        gacha_cog = self.bot.get_cog('GachaCog')
+        if not gacha_cog:
+            await interaction.response.send_message("❌ GachaCogが見つかりません。", ephemeral=True)
+            return
+
+        try:
+            amount = int(self.amount.value)
+            
+            if self.mode == "add":
+                new_val = gacha_cog.add_points(self.user.id, amount)
+                await interaction.response.send_message(f"✅ {self.user.display_name} に {amount} SP を付与しました。(合計: {new_val} SP)", ephemeral=True)
+            elif self.mode == "set":
+                new_val = gacha_cog.set_points(self.user.id, amount)
+                await interaction.response.send_message(f"✅ {self.user.display_name} のポイントを {amount} SP に設定しました。", ephemeral=True)
+                
+        except ValueError:
+            await interaction.response.send_message("❌ 数値を入力してください。", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ エラー: {e}", ephemeral=True)
+
 class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -595,6 +1022,19 @@ class AdminCog(commands.Cog):
     async def admin_login(self, interaction: discord.Interaction):
         """Open admin login modal"""
         await interaction.response.send_modal(AdminLoginModal(self.bot, self))
+
+    @commands.command(name="sync")
+    @commands.is_owner()
+    async def sync_commands(self, ctx):
+        """Force sync slash commands"""
+        msg = await ctx.send("🔄 Syncing commands...")
+        try:
+            # Sync global
+            self.bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await self.bot.tree.sync(guild=ctx.guild)
+            await msg.edit(content=f"✅ Synced {len(synced)} commands to this guild.")
+        except Exception as e:
+            await msg.edit(content=f"❌ Sync failed: {e}")
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))

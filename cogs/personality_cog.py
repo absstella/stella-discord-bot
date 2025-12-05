@@ -23,7 +23,7 @@ class PersonalityCog(commands.Cog):
         except Exception as e:
             return {"error": str(e)}
 
-    @commands.hybrid_command(name="personality", aliases=["profile", "traits"])
+    @commands.hybrid_command(name="personality", aliases=["traits"])
     async def personality(self, ctx):
         """Show current personality traits and notes"""
         data = self._load_profile()

@@ -26,7 +26,7 @@ class UtilityCog(commands.Cog):
     async def cog_unload(self):
         self.reminder_check_task.cancel()
 
-    @commands.hybrid_command(name='help', aliases=['h', 'commands'])
+    @commands.hybrid_command(name='utility_help', aliases=['uhelp'])
     async def help_command(self, ctx, category: Optional[str] = None):
         """全コマンドを表示します（カテゴリ選択式）"""
         view = HelpView(self.bot, ctx.author)
@@ -260,7 +260,7 @@ class UtilityCog(commands.Cog):
                     self.reminders.remove(reminder)
             
             # Check database reminders if available
-            if self.bot.db_manager:
+            if self.bot.db_manager and self.bot.db_manager.is_connected():
                 async with self.bot.db_manager.get_connection() as conn:
                     db_reminders = await conn.fetch(
                         "SELECT * FROM reminders WHERE reminder_time <= $1",

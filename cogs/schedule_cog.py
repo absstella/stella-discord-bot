@@ -1,509 +1,249 @@
-import os
-import asyncio
-import logging
-from typing import Dict, List, Optional
 import discord
-from discord.ext import commands, tasks
-from datetime import datetime, timedelta, timezone
+from discord.ext import commands
+from discord import app_commands
 import json
-import re
-from database.models import UserProfile, DatabaseHelpers
-from config import *
+import os
+import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class ScheduleCog(commands.Cog):
-    """スケジュール・リマインダー機能"""
-    
     def __init__(self, bot):
         self.bot = bot
-        self.scheduled_events = {}  # guild_id -> events list
-        self.reminders = {}  # user_id -> reminders list
-        
-        # スケジュールチェックタスクを開始
-        self.schedule_check_task.start()
-        
-    def cog_unload(self):
-        """Cog がアンロードされる時にタスクを停止"""
-        if hasattr(self, 'schedule_check_task'):
-            self.schedule_check_task.cancel()
+        self.schedules_file = "data/schedules.json"
+        self.schedules = self.load_schedules()
 
-    @commands.hybrid_command(name='schedule_event')
-    async def schedule_event(self, ctx, date_time: str, *, event_description: str):
-        """イベントをスケジュール (/schedule_event "YYYY/MM/DD HH:MM" イベント説明)"""
-        try:
-            # 日時解析
+    def load_schedules(self):
+        if os.path.exists(self.schedules_file):
             try:
-                # YYYY/MM/DD HH:MM または MM/DD HH:MM 形式をサポート
-                if re.match(r'^\d{4}/\d{1,2}/\d{1,2} \d{1,2}:\d{2}$', date_time):
-                    scheduled_time = datetime.strptime(date_time, '%Y/%m/%d %H:%M')
-                elif re.match(r'^\d{1,2}/\d{1,2} \d{1,2}:\d{2}$', date_time):
-                    current_year = datetime.now().year
-                    scheduled_time = datetime.strptime(f"{current_year}/{date_time}", '%Y/%m/%d %H:%M')
+                with open(self.schedules_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def save_schedules(self):
+        os.makedirs(os.path.dirname(self.schedules_file), exist_ok=True)
+        with open(self.schedules_file, 'w', encoding='utf-8') as f:
+            json.dump(self.schedules, f, ensure_ascii=False, indent=4)
+
+    @commands.hybrid_group(name="schedule", description="スケジュール調整")
+    async def schedule(self, ctx):
+        if ctx.invoked_subcommand is None:
+            await ctx.send("サブコマンドを指定してください: create")
+
+    @schedule.command(name="create", description="日程調整を作成します")
+    @app_commands.describe(title="イベント名", dates="候補日（カンマ区切り, 例: 12/1 21:00, 12/2 22:00）")
+    async def create(self, ctx, title: str, dates: str):
+        """Create a schedule poll"""
+        date_list = [d.strip() for d in dates.split(',')]
+        
+        # Create initial data structure
+        schedule_id = str(ctx.message.id) # Use message ID as key (will update after sending)
+        
+        embed = discord.Embed(
+            title=f"📅 日程調整: {title}",
+            description="下のボタンから参加可能な日程を回答してください。",
+            color=0x00BFFF,
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="主催者", value=ctx.author.display_name, inline=False)
+        
+        # Initial table
+        table_text = self.generate_table_text(date_list, {})
+        embed.add_field(name="集計状況", value=table_text, inline=False)
+        
+        view = ScheduleView(self, schedule_id, date_list)
+        msg = await ctx.send(embed=embed, view=view)
+        
+        # Update ID to actual message ID and save
+        real_id = str(msg.id)
+        view.schedule_id = real_id # Update view's ID reference
+        
+        self.schedules[real_id] = {
+            "title": title,
+            "dates": date_list,
+            "responses": {}, # user_id: {date: status} (status: 0=x, 1=ok, 2=maybe)
+            "channel_id": ctx.channel.id,
+            "author_id": ctx.author.id
+        }
+        self.save_schedules()
+
+    def generate_table_text(self, dates, responses):
+        text = "```\n"
+        # Header
+        # text += "日程             | 〇 | △ | ✕ | メンバー\n"
+        # text += "-" * 40 + "\n"
+        
+        for date in dates:
+            ok_users = []
+            maybe_users = []
+            ng_users = []
+            
+            for uid, user_resp in responses.items():
+                status = user_resp.get(date, 0) # Default to 0 (unknown/ng) - actually let's say 0 is unselected
+                # Let's define: 1=OK, 2=Maybe, 0=None/NG
+                # But we need to know who responded.
+                # Let's simplify: If user is in responses, they responded.
+                
+                if status == 1:
+                    ok_users.append(uid)
+                elif status == 2:
+                    maybe_users.append(uid)
                 else:
-                    await ctx.send("❌ 日時フォーマットが正しくありません。\n例: `2024/12/31 15:30` または `12/31 15:30`")
-                    return
-                
-                # 過去の日時チェック
-                if scheduled_time < datetime.now():
-                    await ctx.send("❌ 過去の日時は設定できません。")
-                    return
-                    
-            except ValueError:
-                await ctx.send("❌ 無効な日時です。正しい日時を入力してください。")
-                return
+                    ng_users.append(uid) # Explicit NG or just not selected but responded
             
-            # イベント情報を保存
-            guild_id = ctx.guild.id
-            if guild_id not in self.scheduled_events:
-                self.scheduled_events[guild_id] = []
+            # Count
+            ok_count = len(ok_users)
+            maybe_count = len(maybe_users)
             
-            event = {
-                'id': len(self.scheduled_events[guild_id]) + 1,
-                'channel_id': ctx.channel.id,
-                'creator_id': ctx.author.id,
-                'creator_name': ctx.author.display_name,
-                'scheduled_time': scheduled_time.isoformat(),
-                'description': event_description,
-                'created_at': datetime.now().isoformat(),
-                'notified': False
-            }
+            # Format line
+            # 12/01 21:00 | 〇3 △1
+            text += f"{date:<15} | 〇{ok_count} △{maybe_count}\n"
             
-            self.scheduled_events[guild_id].append(event)
-            
-            # データベースに保存
-            await self.save_event_to_database(ctx.guild.id, event)
-            
-            embed = discord.Embed(
-                title="📅 イベントをスケジュールしました",
-                description=f"**{event_description}**",
-                color=0x00ff9f,
-                timestamp=datetime.utcnow()
-            )
-            
-            embed.add_field(
-                name="📆 日時",
-                value=f"{scheduled_time.strftime('%Y年%m月%d日 %H:%M')}",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="👤 作成者",
-                value=ctx.author.display_name,
-                inline=True
-            )
-            
-            embed.add_field(
-                name="🆔 イベントID",
-                value=f"`{event['id']}`",
-                inline=True
-            )
-            
-            embed.set_footer(text="イベント時刻に自動で通知します")
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Schedule event error: {e}")
-            await ctx.send(f"❌ イベントスケジュールエラー: {str(e)}")
+        text += "```"
+        return text
 
-    @commands.hybrid_command(name='list_events')
-    async def list_events(self, ctx):
-        """予定されているイベント一覧 (/list_events)"""
+    async def update_schedule_message(self, message_id):
+        data = self.schedules.get(message_id)
+        if not data:
+            return
+            
+        channel = self.bot.get_channel(data["channel_id"])
+        if not channel:
+            return
+            
         try:
-            guild_id = ctx.guild.id
+            msg = await channel.fetch_message(int(message_id))
+        except:
+            return
             
-            if guild_id not in self.scheduled_events or not self.scheduled_events[guild_id]:
-                embed = discord.Embed(
-                    title="📅 予定されているイベント",
-                    description="現在予定されているイベントはありません。",
-                    color=0x808080
-                )
-                await ctx.send(embed=embed)
-                return
-            
-            # データベースからも読み込み
-            await self.load_events_from_database(guild_id)
-            
-            # 未来のイベントのみフィルタ
-            current_time = datetime.now()
-            future_events = []
-            
-            for event in self.scheduled_events[guild_id]:
-                event_time = datetime.fromisoformat(event['scheduled_time'])
-                if event_time > current_time:
-                    future_events.append(event)
-            
-            if not future_events:
-                embed = discord.Embed(
-                    title="📅 予定されているイベント",
-                    description="現在予定されているイベントはありません。",
-                    color=0x808080
-                )
-                await ctx.send(embed=embed)
-                return
-            
-            # 日時順でソート
-            future_events.sort(key=lambda x: datetime.fromisoformat(x['scheduled_time']))
-            
-            embed = discord.Embed(
-                title="📅 予定されているイベント一覧",
-                description="今後予定されているイベントです",
-                color=0x00ff9f,
-                timestamp=datetime.utcnow()
-            )
-            
-            for i, event in enumerate(future_events[:10]):  # 最大10件表示
-                event_time = datetime.fromisoformat(event['scheduled_time'])
-                time_until = event_time - current_time
-                
-                if time_until.days > 0:
-                    time_str = f"あと{time_until.days}日"
-                elif time_until.seconds > 3600:
-                    hours = time_until.seconds // 3600
-                    time_str = f"あと{hours}時間"
-                else:
-                    minutes = time_until.seconds // 60
-                    time_str = f"あと{minutes}分"
-                
-                embed.add_field(
-                    name=f"🎯 {event['description']}",
-                    value=f"**日時:** {event_time.strftime('%m/%d %H:%M')}\n"
-                          f"**作成者:** {event['creator_name']}\n"
-                          f"**残り時間:** {time_str}\n"
-                          f"**ID:** `{event['id']}`",
-                    inline=False
-                )
-            
-            if len(future_events) > 10:
-                embed.set_footer(text=f"他 {len(future_events) - 10} 件のイベントがあります")
-            
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"List events error: {e}")
-            await ctx.send("❌ イベント一覧表示中にエラーが発生しました。")
+        embed = msg.embeds[0]
+        
+        # Re-generate table
+        table_text = self.generate_table_text(data["dates"], data["responses"])
+        
+        # Find the field to update
+        for i, field in enumerate(embed.fields):
+            if field.name == "集計状況":
+                embed.set_field_at(i, name="集計状況", value=table_text, inline=False)
+                break
+        
+        # Add detailed list field
+        details = ""
+        # Get all users who responded
+        responder_ids = list(data["responses"].keys())
+        if responder_ids:
+            details += "**回答済みメンバー**:\n"
+            for uid in responder_ids:
+                member = channel.guild.get_member(int(uid))
+                name = member.display_name if member else "Unknown"
+                details += f"{name}, "
+            details = details.rstrip(", ")
+        
+        # Update or add details field
+        found_details = False
+        for i, field in enumerate(embed.fields):
+            if field.name == "詳細":
+                embed.set_field_at(i, name="詳細", value=details or "なし", inline=False)
+                found_details = True
+                break
+        if not found_details and details:
+            embed.add_field(name="詳細", value=details, inline=False)
 
-    @commands.hybrid_command(name='cancel_event')
-    async def cancel_event(self, ctx, event_id: int):
-        """イベントをキャンセル (/cancel_event イベントID)"""
-        try:
-            guild_id = ctx.guild.id
-            
-            if guild_id not in self.scheduled_events:
-                await ctx.send("❌ 予定されているイベントがありません。")
-                return
-            
-            # イベントを探す
-            event_to_remove = None
-            for event in self.scheduled_events[guild_id]:
-                if event['id'] == event_id:
-                    event_to_remove = event
-                    break
-            
-            if not event_to_remove:
-                await ctx.send(f"❌ ID `{event_id}` のイベントが見つかりません。")
-                return
-            
-            # 作成者または管理者権限チェック
-            if (ctx.author.id != event_to_remove['creator_id'] and 
-                not ctx.author.guild_permissions.manage_events):
-                await ctx.send("❌ このイベントをキャンセルする権限がありません。")
-                return
-            
-            # イベントを削除
-            self.scheduled_events[guild_id].remove(event_to_remove)
-            
-            # データベースからも削除
-            await self.delete_event_from_database(guild_id, event_id)
-            
-            embed = discord.Embed(
-                title="🗑️ イベントをキャンセルしました",
-                description=f"**{event_to_remove['description']}**",
-                color=0xff6b6b,
-                timestamp=datetime.utcnow()
-            )
-            
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Cancel event error: {e}")
-            await ctx.send(f"❌ イベントキャンセルエラー: {str(e)}")
+        await msg.edit(embed=embed)
 
-    @commands.hybrid_command(name='set_reminder')
-    async def set_reminder(self, ctx, time_str: str, *, message: str):
-        """個人リマインダー設定 (/set_reminder "30m" メッセージ または "2024/12/31 15:30" メッセージ)"""
-        try:
-            # 時間解析
-            remind_time = None
+
+class ScheduleView(discord.ui.View):
+    def __init__(self, cog, schedule_id, dates):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.schedule_id = schedule_id
+        self.dates = dates
+
+    @discord.ui.button(label="回答する", style=discord.ButtonStyle.primary, emoji="📝", custom_id="schedule_answer_btn")
+    async def answer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # We need to ensure we have the correct schedule_id if it was updated from temp ID
+        # The custom_id is static, so we rely on the view's state or the message ID
+        real_id = str(interaction.message.id)
+        
+        data = self.cog.schedules.get(real_id)
+        if not data:
+            await interaction.response.send_message("❌ データが見つかりません。", ephemeral=True)
+            return
+
+        # Create a view for selection
+        view = ResponseView(self.cog, real_id, data["dates"])
+        await interaction.response.send_message("参加可能な日程を選んでください。", view=view, ephemeral=True)
+
+
+class ResponseView(discord.ui.View):
+    def __init__(self, cog, schedule_id, dates):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.schedule_id = schedule_id
+        self.dates = dates
+        
+        # Select for OK
+        options_ok = []
+        for date in dates:
+            options_ok.append(discord.SelectOption(label=date, value=date))
+        
+        if len(options_ok) > 25:
+            options_ok = options_ok[:25] # Limit
             
-            # 相対時間（例: 30m, 2h, 1d）
-            if re.match(r'^\d+[mhd]$', time_str.lower()):
-                number = int(re.search(r'\d+', time_str).group())
-                unit = time_str[-1].lower()
-                
-                if unit == 'm':
-                    remind_time = datetime.now() + timedelta(minutes=number)
-                elif unit == 'h':
-                    remind_time = datetime.now() + timedelta(hours=number)
-                elif unit == 'd':
-                    remind_time = datetime.now() + timedelta(days=number)
+        self.select_ok = discord.ui.Select(placeholder="参加できる日程 (〇)", min_values=0, max_values=len(options_ok), options=options_ok)
+        self.select_ok.callback = self.callback_ok
+        self.add_item(self.select_ok)
+        
+        # Select for Maybe
+        # We can't reuse options objects, need new ones
+        options_maybe = []
+        for date in dates:
+            options_maybe.append(discord.SelectOption(label=date, value=date))
             
-            # 絶対時間（例: 2024/12/31 15:30）
-            elif re.match(r'^\d{4}/\d{1,2}/\d{1,2} \d{1,2}:\d{2}$', time_str):
-                remind_time = datetime.strptime(time_str, '%Y/%m/%d %H:%M')
-            elif re.match(r'^\d{1,2}/\d{1,2} \d{1,2}:\d{2}$', time_str):
-                current_year = datetime.now().year
-                remind_time = datetime.strptime(f"{current_year}/{time_str}", '%Y/%m/%d %H:%M')
+        if len(options_maybe) > 25:
+            options_maybe = options_maybe[:25]
+
+        self.select_maybe = discord.ui.Select(placeholder="微妙な日程 (△)", min_values=0, max_values=len(options_maybe), options=options_maybe)
+        self.select_maybe.callback = self.callback_maybe
+        self.add_item(self.select_maybe)
+        
+        self.ok_dates = []
+        self.maybe_dates = []
+
+    async def callback_ok(self, interaction: discord.Interaction):
+        self.ok_dates = self.select_ok.values
+        await interaction.response.defer()
+
+    async def callback_maybe(self, interaction: discord.Interaction):
+        self.maybe_dates = self.select_maybe.values
+        await interaction.response.defer()
+
+    @discord.ui.button(label="送信", style=discord.ButtonStyle.success)
+    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+        
+        # Update data
+        if self.schedule_id not in self.cog.schedules:
+            await interaction.response.send_message("エラー: データがありません", ephemeral=True)
+            return
             
-            if not remind_time:
-                await ctx.send("❌ 時間フォーマットが正しくありません。\n"
-                             "例: `30m`, `2h`, `1d` または `2024/12/31 15:30`")
-                return
-            
-            if remind_time < datetime.now():
-                await ctx.send("❌ 過去の時間は設定できません。")
-                return
-            
-            # リマインダー保存
-            user_id = ctx.author.id
-            if user_id not in self.reminders:
-                self.reminders[user_id] = []
-            
-            reminder = {
-                'id': len(self.reminders[user_id]) + 1,
-                'channel_id': ctx.channel.id,
-                'guild_id': ctx.guild.id,
-                'remind_time': remind_time.isoformat(),
-                'message': message,
-                'created_at': datetime.now().isoformat(),
-                'notified': False
-            }
-            
-            self.reminders[user_id].append(reminder)
-            
-            # データベースに保存
-            await self.save_reminder_to_database(user_id, reminder)
-            
-            embed = discord.Embed(
-                title="⏰ リマインダーを設定しました",
-                description=f"**{message}**",
-                color=0x00ff9f,
-                timestamp=datetime.utcnow()
-            )
-            
-            embed.add_field(
-                name="🕐 通知時刻",
-                value=remind_time.strftime('%Y年%m月%d日 %H:%M'),
-                inline=True
-            )
-            
-            time_until = remind_time - datetime.now()
-            if time_until.days > 0:
-                time_str = f"あと{time_until.days}日"
-            elif time_until.seconds > 3600:
-                hours = time_until.seconds // 3600
-                time_str = f"あと{hours}時間"
+        responses = {}
+        for date in self.dates:
+            if date in self.ok_dates:
+                responses[date] = 1
+            elif date in self.maybe_dates:
+                responses[date] = 2
             else:
-                minutes = time_until.seconds // 60
-                time_str = f"あと{minutes}分"
-            
-            embed.add_field(
-                name="⏳ 残り時間",
-                value=time_str,
-                inline=True
-            )
-            
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Set reminder error: {e}")
-            await ctx.send(f"❌ リマインダー設定エラー: {str(e)}")
-
-    @tasks.loop(minutes=1)
-    async def schedule_check_task(self):
-        """定期的にスケジュールとリマインダーをチェック"""
-        try:
-            current_time = datetime.now()
-            
-            # イベント通知チェック
-            for guild_id, events in self.scheduled_events.items():
-                for event in events[:]:  # コピーでイテレート
-                    if event.get('notified'):
-                        continue
-                    
-                    event_time = datetime.fromisoformat(event['scheduled_time'])
-                    if event_time <= current_time:
-                        await self.notify_event(guild_id, event)
-                        event['notified'] = True
-            
-            # リマインダー通知チェック
-            for user_id, reminders in self.reminders.items():
-                for reminder in reminders[:]:  # コピーでイテレート
-                    if reminder.get('notified'):
-                        continue
-                    
-                    remind_time = datetime.fromisoformat(reminder['remind_time'])
-                    if remind_time <= current_time:
-                        await self.notify_reminder(user_id, reminder)
-                        reminder['notified'] = True
-                        
-        except Exception as e:
-            logger.error(f"Schedule check task error: {e}")
-
-    @schedule_check_task.before_loop
-    async def before_schedule_check(self):
-        """スケジュールチェックタスク開始前の待機"""
-        await self.bot.wait_until_ready()
-
-    async def notify_event(self, guild_id: int, event: dict):
-        """イベント通知を送信"""
-        try:
-            guild = self.bot.get_guild(guild_id)
-            if not guild:
-                return
-            
-            channel = guild.get_channel(event['channel_id'])
-            if not channel:
-                return
-            
-            embed = discord.Embed(
-                title="🔔 イベント通知",
-                description=f"**{event['description']}** の時間です！",
-                color=0xff9900,
-                timestamp=datetime.utcnow()
-            )
-            
-            embed.add_field(
-                name="👤 作成者",
-                value=event['creator_name'],
-                inline=True
-            )
-            
-            embed.add_field(
-                name="📅 予定時刻",
-                value=datetime.fromisoformat(event['scheduled_time']).strftime('%Y年%m月%d日 %H:%M'),
-                inline=True
-            )
-            
-            # 作成者にメンション
-            creator = guild.get_member(event['creator_id'])
-            mention_text = f"{creator.mention} " if creator else ""
-            
-            await channel.send(f"{mention_text}🎯", embed=embed)
-            logger.info(f"Event notification sent: {event['description']}")
-            
-        except Exception as e:
-            logger.error(f"Error sending event notification: {e}")
-
-    async def notify_reminder(self, user_id: int, reminder: dict):
-        """リマインダー通知を送信"""
-        try:
-            user = self.bot.get_user(user_id)
-            if not user:
-                return
-            
-            guild = self.bot.get_guild(reminder['guild_id'])
-            channel = guild.get_channel(reminder['channel_id']) if guild else None
-            
-            embed = discord.Embed(
-                title="⏰ リマインダー",
-                description=f"**{reminder['message']}**",
-                color=0xff6b6b,
-                timestamp=datetime.utcnow()
-            )
-            
-            embed.add_field(
-                name="🕐 設定時刻",
-                value=datetime.fromisoformat(reminder['remind_time']).strftime('%Y年%m月%d日 %H:%M'),
-                inline=True
-            )
-            
-            # チャンネルまたはDMに送信
-            if channel and channel.permissions_for(guild.me).send_messages:
-                await channel.send(f"{user.mention} 📢", embed=embed)
-            else:
-                try:
-                    await user.send(embed=embed)
-                except discord.Forbidden:
-                    logger.warning(f"Could not send reminder to user {user_id}")
-            
-            logger.info(f"Reminder notification sent: {reminder['message']}")
-            
-        except Exception as e:
-            logger.error(f"Error sending reminder notification: {e}")
-
-    async def save_event_to_database(self, guild_id: int, event: dict):
-        """イベントをデータベースに保存"""
-        try:
-            if hasattr(self.bot, 'db_manager') and self.bot.db_manager:
-                query = """
-                INSERT INTO scheduled_events (guild_id, channel_id, creator_id, creator_name, 
-                                            scheduled_time, description, created_at, notified)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """
-                await self.bot.db_manager.execute_query(
-                    query, guild_id, event['channel_id'], event['creator_id'],
-                    event['creator_name'], event['scheduled_time'], event['description'],
-                    event['created_at'], event['notified']
-                )
-        except Exception as e:
-            logger.error(f"Error saving event to database: {e}")
-
-    async def save_reminder_to_database(self, user_id: int, reminder: dict):
-        """リマインダーをデータベースに保存"""
-        try:
-            if hasattr(self.bot, 'db_manager') and self.bot.db_manager:
-                query = """
-                INSERT INTO reminders (user_id, channel_id, guild_id, remind_time, 
-                                     message, created_at, notified)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """
-                await self.bot.db_manager.execute_query(
-                    query, user_id, reminder['channel_id'], reminder['guild_id'],
-                    reminder['remind_time'], reminder['message'], 
-                    reminder['created_at'], reminder['notified']
-                )
-        except Exception as e:
-            logger.error(f"Error saving reminder to database: {e}")
-
-    async def load_events_from_database(self, guild_id: int):
-        """データベースからイベントを読み込み"""
-        try:
-            if hasattr(self.bot, 'db_manager') and self.bot.db_manager:
-                query = "SELECT * FROM scheduled_events WHERE guild_id = $1 AND notified = FALSE"
-                events = await self.bot.db_manager.fetch_all(query, guild_id)
-                
-                if events:
-                    if guild_id not in self.scheduled_events:
-                        self.scheduled_events[guild_id] = []
-                    
-                    for row in events:
-                        event = {
-                            'id': row['id'],
-                            'channel_id': row['channel_id'],
-                            'creator_id': row['creator_id'],
-                            'creator_name': row['creator_name'],
-                            'scheduled_time': row['scheduled_time'],
-                            'description': row['description'],
-                            'created_at': row['created_at'],
-                            'notified': row['notified']
-                        }
-                        
-                        # 重複チェック
-                        if not any(e['id'] == event['id'] for e in self.scheduled_events[guild_id]):
-                            self.scheduled_events[guild_id].append(event)
-                            
-        except Exception as e:
-            logger.error(f"Error loading events from database: {e}")
-
-    async def delete_event_from_database(self, guild_id: int, event_id: int):
-        """データベースからイベントを削除"""
-        try:
-            if hasattr(self.bot, 'db_manager') and self.bot.db_manager:
-                query = "DELETE FROM scheduled_events WHERE guild_id = $1 AND id = $2"
-                await self.bot.db_manager.execute_query(query, guild_id, event_id)
-        except Exception as e:
-            logger.error(f"Error deleting event from database: {e}")
+                responses[date] = 0 # NG
+        
+        self.cog.schedules[self.schedule_id]["responses"][user_id] = responses
+        self.cog.save_schedules()
+        
+        await self.cog.update_schedule_message(self.schedule_id)
+        await interaction.response.send_message("✅ 回答を記録しました！", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(ScheduleCog(bot))

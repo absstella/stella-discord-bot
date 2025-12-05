@@ -248,6 +248,23 @@ class SpeechPatternCog(commands.Cog):
             logger.error(f"Error showing speech pattern stats: {e}")
             await ctx.send(f"❌ エラーが発生しました: {str(e)}")
 
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Analyze messages for speech patterns"""
+        # Ignore bots and commands
+        if message.author.bot or message.content.startswith(tuple(self.bot.command_prefix)):
+            return
+            
+        # Ignore short messages
+        if len(message.content) < 5:
+            return
+
+        try:
+            # Analyze message asynchronously to not block
+            speech_pattern_manager.analyze_message(message.author.id, message.guild.id, message.content)
+        except Exception as e:
+            logger.error(f"Error analyzing speech pattern: {e}")
+
 async def setup(bot):
     await bot.add_cog(SpeechPatternCog(bot))
     logger.info("Speech Pattern Cog loaded")
