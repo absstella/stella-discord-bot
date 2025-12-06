@@ -529,5 +529,56 @@ class PrankCog(commands.Cog):
             except:
                 pass
 
+    @app_commands.command(name="hasegawa", description="長谷川を召喚します")
+    async def hasegawa(self, interaction: discord.Interaction):
+        if not interaction.user.voice:
+            await interaction.response.send_message("❌ ボイスチャンネルに参加してください！", ephemeral=True)
+            return
+
+        channel = interaction.user.voice.channel
+        vc = interaction.guild.voice_client
+
+        if not vc:
+            try:
+                vc = await channel.connect()
+            except Exception as e:
+                await interaction.response.send_message(f"❌ 接続エラー: {e}", ephemeral=True)
+                return
+        
+        # Hikakin4ne ID: 1100715717038460979
+        sound_id = 1100715717038460979
+        
+        try:
+            # Fetch sound
+            sound = None
+            sounds = await interaction.guild.fetch_soundboard_sounds()
+            for s in sounds:
+                if s.id == sound_id:
+                    sound = s
+                    break
+            
+            if not sound:
+                await interaction.response.send_message("❌ サウンド「Hikakin4ne」が見つかりませんでした。", ephemeral=True)
+                # If we just connected, disconnect
+                if vc and not vc.is_playing(): 
+                     await vc.disconnect()
+                return
+
+            await interaction.response.send_message("ヒカキン４ねよ雑魚")
+            
+            # Play sound
+            vc.play(discord.FFmpegPCMAudio(sound.url))
+            
+            # Wait a bit and disconnect if we connected just for this
+            # Assuming we want to leave after playing
+            await asyncio.sleep(5)
+            if vc.is_connected():
+                await vc.disconnect()
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ エラー: {e}", ephemeral=True)
+            if vc and vc.is_connected():
+                await vc.disconnect()
+
 async def setup(bot):
     await bot.add_cog(PrankCog(bot))
